@@ -4,9 +4,9 @@
 # Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
 
 import os
+import sys
 import telebot
 import telebot.types as types
-import sys
 
 sys.path.append(os.path.abspath('..'))
 from logger import LOGGER  # noqa: E402
