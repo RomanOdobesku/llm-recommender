@@ -2,8 +2,8 @@
 
 import os
 import telebot
+from src.logger import LOGGER
 from telebot import types
-from logger import LOGGER
 
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
