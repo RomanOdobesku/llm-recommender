@@ -1,0 +1,31 @@
+name: Code checking
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+jobs:
+  code_checking:
+    name: Run linters
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: '3.12'
+          cache: true
+
+      - name: Install dependencies
+        run: pdm install
+
+      - name: Check flake8
+        run: pdm run flake8 ./src
+
+      - name: Check pylint
+        if: ${{ always() }}
+        run: pdm run pylint ./src/**/*.py
