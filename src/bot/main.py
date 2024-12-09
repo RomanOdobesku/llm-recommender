@@ -2,8 +2,8 @@
 
 import os
 import telebot
-from src.logger import LOGGER
 from telebot import types
+from src.logger import LOGGER  #pylint: disable=E0401
 
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
@@ -16,6 +16,9 @@ class Item:
         self.image_link = image_link
         self.category = category
         self.description = description
+
+    def save_image(self):
+        """ save image locally by image link """
 
     def __repr__(self):
         return f"Item(name={self.item_id}, item_id={self.image_link}, "\
