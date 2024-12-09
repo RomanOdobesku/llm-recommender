@@ -3,7 +3,7 @@
 import os
 import telebot
 from telebot import types
-from src.logger import LOGGER  #pylint: disable=E0401
+from src.logger import LOGGER  # pylint: disable=E0401
 
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
