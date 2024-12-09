@@ -5,15 +5,16 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-
   workflow_dispatch:
 
 jobs:
-  code_checking:
-    name: Run linters
+  check:
+    name: Code checking
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Setup PDM
         uses: pdm-project/setup-pdm@v4
         with:
