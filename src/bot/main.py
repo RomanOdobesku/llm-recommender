@@ -1,21 +1,16 @@
-# This is a sample Python script.
+""" main file to run a bot """
 
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
-
+from logger import LOGGER
 import os
-import sys
 import telebot
-import telebot.types as types
-
-sys.path.append(os.path.abspath('..'))
-from logger import LOGGER  # noqa: E402
+from telebot import types
 
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
 
 
 class Item:
+    """ Item to keep info about an item """
     def __init__(self, item_id, image_link, category, description):
         self.item_id = item_id
         self.image_link = image_link
