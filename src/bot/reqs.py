@@ -43,6 +43,6 @@ def get_product_for_user(user_id: str) -> Item:
 
     LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")
 
-    items = [Item(item["item_id"], item["image_link"],
-                  item["cat1"], item["description"]) for item in response.json()["recommendations"]]
+    items = [Item(item["item_id"], item["img_url"],
+                  item["cat1"], item["title"]) for item in response.json()["recommendations"]]
     return items[0]
