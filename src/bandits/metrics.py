@@ -174,3 +174,88 @@ def novelty_metric(interactions_path: str) -> float:
     )
 
     return novelty
+
+
+def match_rate(predictions: dict, cluster_descriptions_path: str) -> float:
+    """
+    Calculate the match rate of predictions with cluster descriptions.
+
+    :param predictions: List of generated outputs from the LLM.
+    :param cluster_descriptions: List of valid cluster descriptions.
+    :return: Match rate as a float.
+    """
+    cluster_descriptions = pd.read_csv(cluster_descriptions_path, sep=";")
+    cluster_descriptions = cluster_descriptions["sub_cat_name"].unique()
+    matches = sum(1 for pred in predictions.values() if pred in cluster_descriptions)
+
+    return matches / len(predictions) if predictions else 0
+
+
+def recall(predictions: dict, interactions_path: str) -> float:
+    """
+    Calculate recall for user interest transitions.
+
+    :param predictions: List of generated outputs from the LLM.
+    :param interactions_path: List of successful user interest transitions.
+    :return: Recall as a float.
+    """
+    interactions_df = pd.read_csv(interactions_path)
+    actual_transitions = interactions_df[interactions_df["interaction"] == 1]
+    matches = sum(1 for pred in predictions if pred in actual_transitions)
+
+    return matches / len(actual_transitions) if actual_transitions else 0
+
+
+def calculate_uci_at_n_sessions(
+    interactions_path: str,
+    n_values: list,
+    session_limit: int = 3,
+    eps: int = 1800,
+) -> dict:
+    """
+    Calculate the User Clustered Interest (UCI@N)
+      metric based on a certain number of recent sessions.
+
+    :param interactions_path: Path to the CSV file containing user interactions data.
+                    The file should have columns 'user_id', 'interaction', 'cat2', and 'time'.
+    :param n_values: List of N values for which to compute UCI@N.
+    :param session_limit: Number of most recent sessions to consider per user.
+    :param eps: The time difference (in seconds) threshold to define a new session.
+    :param start_time: Optional. Start of the time interval as a string.
+    :param end_time: Optional. End of the time interval as a string.
+    :return: A dictionary where keys are N values and values are the UCI@N metric.
+    """
+    # Get the interactions DataFrame with session IDs
+    interactions_df = get_sessions(interactions_path, eps)
+
+    # Filter interactions to only include "likes" (interaction == 1)
+    liked_interactions = interactions_df[interactions_df["interaction"] == 1]
+
+    # Select the most recent `session_limit` sessions for each user
+    recent_sessions = (
+        liked_interactions.groupby("user_id")
+        .apply(
+            lambda group: group[
+                group["session_id"].isin(group["session_id"].nlargest(session_limit))
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    # Count unique clusters (cat2) for the selected sessions
+    user_cluster_counts = (
+        recent_sessions.groupby("user_id")["cat2"]
+        .nunique()
+        .reset_index(name="unique_clusters")
+    )
+
+    # Compute UCI@N for each N value
+    uci_at_n = {}
+    for n in n_values:
+        # Count the number of users who interacted with at least N unique clusters
+        users_with_n_clusters = user_cluster_counts[
+            user_cluster_counts["unique_clusters"] >= n
+        ]
+        uci_at_n[n] = len(users_with_n_clusters)
+
+    return uci_at_n
