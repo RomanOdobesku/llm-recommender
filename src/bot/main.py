@@ -3,6 +3,7 @@
 import os
 import csv
 from datetime import datetime
+import pandas as pd
 import telebot
 from telebot import types
 from src.logger import LOGGER  # pylint: disable=import-error
@@ -44,6 +45,33 @@ def start_handler(message):
                      "Тебе просто надо лайкать любимые товары")
     product = get_product_for_user(message.from_user.id)
     send_user_recommendation(message.chat.id, product)
+
+
+@bot.message_handler(commands=['help'])
+def help_handler(message):
+    """
+    Print help data
+
+    :param message: message of help command
+    """
+    data = "/start - начать выбирать товары\n/reset - удалить вашу историю выборов"
+    bot.send_message(message.chat.id, data)
+
+
+@bot.message_handler(commands=['reset'])
+def reset_handler(message):
+    """
+    Delete user interactions
+
+    :param message: message of reset command
+    """
+    user_id = message.from_user.id
+
+    interactions = pd.read_csv("./data/interactions.csv")
+    without_a_user = interactions[interactions.user_id != user_id]
+    without_a_user.to_csv('./data/interactions.csv', index=False, header=True)
+
+    bot.send_message(message.chat.id, "Удалили вашу историю")
 
 
 @bot.callback_query_handler(func=lambda call: True)
