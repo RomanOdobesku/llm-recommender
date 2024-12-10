@@ -46,3 +46,17 @@ def get_product_for_user(user_id: str) -> Item:
     items = [Item(item["item_id"], item["img_url"],
                   item["cat1"], item["title"]) for item in response.json()["recommendations"]]
     return items[0]
+
+
+def update_interactions(path: str):
+    LOGGER.info(f"interactions by path {path}")
+
+    url = f"http://localhost:{port}/update/"
+
+    data = {
+        "interactions_path": path,
+    }
+
+    response = requests.post(url, json=data, timeout=10)
+
+    LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")

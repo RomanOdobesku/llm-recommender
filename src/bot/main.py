@@ -7,13 +7,16 @@ import pandas as pd
 import telebot
 from telebot import types
 from src.logger import LOGGER  # pylint: disable=import-error
-from .reqs import Item, get_product_for_user  # pylint: disable=relative-beyond-top-level
+from .reqs import Item, get_product_for_user, update_interactions  # pylint: disable=relative-beyond-top-level
 
+counter = 0
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
 
 
 def send_user_recommendation(chat_id: str, recommendation: Item):
+    global counter
+    counter = counter + 1
     """
     Func to send_user_recommendation
 
@@ -30,6 +33,8 @@ def send_user_recommendation(chat_id: str, recommendation: Item):
     photo_caption = f"Категория: {recommendation.category}\nОписание: {recommendation.description}"
     bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
                    reply_markup=markup_inline)
+    if counter % 20:
+        update_interactions(os.path.abspath("./data/interactions.csv"))
 
 
 @bot.message_handler(commands=['start'])
