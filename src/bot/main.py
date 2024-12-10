@@ -4,49 +4,12 @@ import os
 import csv
 from datetime import datetime
 import telebot
-import pandas
 from telebot import types
 from src.logger import LOGGER  # pylint: disable=import-error
+from .reqs import Item, get_product_for_user  # pylint: disable=relative-beyond-top-level
 
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
-items = pandas.read_csv("./data/items.csv")
-print(items.head())
-
-
-class Item:
-    """ Item to keep info about an item """
-    def __init__(self, item_id, image_link, category, description):
-        self.item_id = item_id
-        self.image_link = image_link
-        self.category = category
-        self.description = description
-
-    def save_image(self):
-        """ save image locally by image link """
-
-    def __repr__(self):
-        return f"Item(name={self.item_id}, item_id={self.image_link}, "\
-                f"link={self.category}, cat1={self.description})"
-
-
-def get_product_for_user(user_id: str) -> Item:
-    """
-    A simple version of a bandit to get item
-
-    :param user_id: user_id get id of user to get a recommendations
-    :return recommendation for a user
-    """
-    LOGGER.info(f"get a product for user {user_id}")
-    rnd = items.sample(n=1).values
-    item = Item(
-        item_id=rnd[0][0],
-        image_link=rnd[0][7],
-        category=rnd[0][3],
-        description=rnd[0][6],
-    )
-    return item
-    # return Item(1, "https://clck.ru/3F8PEP", "Категория1", "description")
 
 
 def send_user_recommendation(chat_id: str, recommendation: Item):
