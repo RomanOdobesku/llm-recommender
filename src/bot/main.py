@@ -33,7 +33,7 @@ def send_user_recommendation(chat_id: str, recommendation: Item):
     photo_caption = f"Категория: {recommendation.category}\nОписание: {recommendation.description}"
     bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
                    reply_markup=markup_inline)
-    if counter % 20:
+    if counter % 20 == 0:
         update_interactions(os.path.abspath("./data/interactions.csv"))
 
 
