@@ -2,12 +2,15 @@
 Class for a hierarchical bandit-based recommendation system.
 """
 
+import os
+import pickle
 import random
+from datetime import datetime
 
 import pandas as pd
 from mab2rec import BanditRecommender, LearningPolicy
 
-from src.logger import LOGGER  # pylint: disable=import-error
+from src.logger import LOGGER
 
 
 class Recommender:
@@ -111,6 +114,68 @@ class Recommender:
         rewards = self.interactions_df["interaction"].tolist()
 
         self.rec.fit(decisions=decisions, rewards=rewards)
+        self.save()
+
+        LOGGER.info(f"Fit completed with {len(decisions)} interactions.")
+
+    def partial_fit(self, interactions_data_path):
+        """
+        Perform incremental training using new interaction data.
+        Only considers interactions that occurred after the latest time
+        in the current interactions data.
+
+        :param interactions_data_path: Path to the CSV file containing interaction data.
+        :return: None
+        """
+        new_interactions_df = self.load_data(interactions_data_path)
+        if new_interactions_df.empty:
+            LOGGER.info("No new interactions data to fit.")
+            return
+
+        new_interactions_df["time"] = pd.to_datetime(new_interactions_df["time"])
+
+        if not self.interactions_df.empty and "time" in self.interactions_df.columns:
+            self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
+            latest_time = self.interactions_df["time"].max()
+            new_interactions_df = new_interactions_df[
+                new_interactions_df["time"] > latest_time
+            ]
+
+        if new_interactions_df.empty:
+            LOGGER.info("No new interactions after the latest time.")
+            return
+
+        self.interactions_df = pd.concat(
+            [self.interactions_df, new_interactions_df], ignore_index=True
+        )
+        decisions_new = new_interactions_df["item_id"].astype(str).tolist()
+        rewards_new = new_interactions_df["interaction"].tolist()
+        self.rec.partial_fit(decisions_new, rewards_new)
+        self.save()
+
+        LOGGER.info(
+            f"Partial fit completed with {len(decisions_new)} new interactions."
+        )
+
+    def save(self):
+        """
+        Save the trained model to the models directory with a timestamped filename.
+
+        :return: None
+        """
+        models_dir = "src/bandits/models"
+        os.makedirs(models_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"bandit_{timestamp}.pkl"
+        filepath = os.path.join(models_dir, filename)
+
+        try:
+            with open(filepath, "wb") as fp:
+                pickle.dump(self, fp)
+            LOGGER.info(f"Model saved to {filepath}")
+        except (OSError, IOError, pickle.PickleError) as e:
+            LOGGER.error(f"Failed to save the model: {e}")
 
     def predict(self, use_llm=False):
         """
@@ -122,10 +187,23 @@ class Recommender:
         cat2 = self.get_llm_selected_cat2() if use_llm else self.get_random_cat2()
         filtered_items = self.filter_items_by_cat2(cat2)
         filtered_arms = filtered_items["item_id"].astype(str).tolist()
+
         if not filtered_arms:
             LOGGER.info("No items found for the selected category.")
             return None
+
         self.rec.set_arms(filtered_arms)
+        LOGGER.info(f"Number of arms: {len(self.rec.mab.arms)}")
         recommendations = self.rec.recommend()
-        LOGGER.info(f"Number of used arms: {len(self.rec.mab.arms)}")
-        return recommendations
+
+        if not recommendations:
+            LOGGER.info("No recommendations generated.")
+            return None
+
+        recommended_ids = [int(item) for item in recommendations]
+        recommended_items = self.items_df[
+            self.items_df["item_id"].isin(recommended_ids)
+        ]
+
+        LOGGER.info(f"Recommended items: {recommended_items}")
+        return recommended_items
