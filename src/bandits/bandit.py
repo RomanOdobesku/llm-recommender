@@ -42,7 +42,7 @@ class Recommender:
         :raises FileNotFoundError: If the file does not exist.
         """
         try:
-            df = pd.read_csv(filename)
+            df = pd.read_csv(filename, sep=",")
             LOGGER.info(f"Dataset loaded from {filename}")
             return df
         except FileNotFoundError:
@@ -55,6 +55,7 @@ class Recommender:
 
         :return: A dictionary representing the hierarchical category structure.
         """
+
         hierarchical_categories = {}
         for _, row in self.items_df.iterrows():
             cat1, cat2, cat3 = row["cat1"], row["cat2"], row["cat3"]

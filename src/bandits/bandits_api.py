@@ -80,6 +80,7 @@ async def update(request: UpdateRequest):
     try:
         RECOMMENDER.partial_fit(request.interactions_path)
         return {"message": "Recommender updated successfully."}
+
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
