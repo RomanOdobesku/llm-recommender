@@ -8,7 +8,7 @@ import telebot
 from telebot import types
 from src.logger import LOGGER  # pylint: disable=import-error
 from .reqs import (Item, get_product_for_user,  # pylint: disable=relative-beyond-top-level
-                   update_interactions, # pylint: disable=relative-beyond-top-level
+                   update_interactions,  # pylint: disable=relative-beyond-top-level
                    escape_description)  # pylint: disable=relative-beyond-top-level
 
 INTERACTION_COUNTER = 0

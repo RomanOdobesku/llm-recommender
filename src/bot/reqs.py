@@ -21,6 +21,7 @@ class ItemInfo:
         return f"category={self.category}, description={self.description}, " \
                f"price={self.price}"
 
+
 class Item:
     """ Item to keep info about an item """
     def __init__(self, item_id, image_link, link, info):
