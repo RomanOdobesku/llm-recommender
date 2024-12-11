@@ -128,7 +128,8 @@ class Recommender:
 
     def extract_available_categories(self):
         """
-        Extract as list all second-level categories available within the hierarchical categories structure.
+        Extract as list all second-level categories available within
+        the hierarchical categories structure.
 
         :return: A list of second-level categories available in the hierarchical structure.
         """
@@ -148,7 +149,9 @@ class Recommender:
         """
         if n > len(self.available_categories):
             LOGGER.error(
-                f"Requested number of categories (n={n}) exceeds available categories ({len(self.available_categories)}). Adjusting to available maximum."
+                f"Requested number of categories (n={n}) exceeds \
+                available categories ({len(self.available_categories)}). \
+                Adjusting to available maximum."
             )
             n = min(n, len(self.available_categories))
         return random.sample(self.available_categories, n)
@@ -159,7 +162,8 @@ class Recommender:
 
         :param user_id: The ID of the user.
         :param n: Number of last liked categories to retrieve.
-        :return: A list of the last `n` liked categories, supplemented with random categories if needed.
+        :return: A list of the last `n` liked categories,
+        supplemented with random categories if needed.
         """
         user_interactions_df = self.interactions_df[
             (self.interactions_df["user_id"] == user_id)
@@ -184,9 +188,11 @@ class Recommender:
 
         :return: A selected second-level category.
         """
-        C1, C2 = self.get_last_liked_categories(user_id)
-        CL = self.predicted_categories_map.get((C1, C2), self.get_random_cat(n=1)[0])
-        return CL
+        user_cat21, user_cat22 = self.get_last_liked_categories(user_id)
+        predicted_cat = self.predicted_categories_map.get(
+            (user_cat21, user_cat22), self.get_random_cat(n=1)[0]
+        )
+        return predicted_cat
 
     def filter_items_by_cat(self, category):
         """
@@ -229,8 +235,8 @@ class Recommender:
         new_interactions_df = self.load_data(interactions_data_path)
 
         if new_interactions_df.empty:
-            LOGGER.info("No new interactions data to fit.")
-            return
+            LOGGER.info("No new interactions data.")
+            return None
 
         old_users_statistics = self.interactions_df.groupby("user_id").size()
         new_users_statistics = new_interactions_df.groupby("user_id").size()
@@ -249,7 +255,7 @@ class Recommender:
 
         if new_interactions_df.empty:
             LOGGER.info("No new interactions after the latest time.")
-            return
+            return None
 
         self.interactions_df = pd.concat(
             [self.interactions_df, new_interactions_df], ignore_index=True
