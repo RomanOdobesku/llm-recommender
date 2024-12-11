@@ -208,25 +208,45 @@ def recall(predictions: dict, interactions_path: str) -> float:
 
 def calculate_uci_at_n_sessions(
     interactions_path: str,
+    items_path: str,
     n_values: list,
     session_limit: int = 3,
     eps: int = 1800,
 ) -> dict:
     """
-    Calculate the User Clustered Interest (UCI@N)
-      metric based on a certain number of recent sessions.
+    Calculate the User Clustered Interest (UCI@N) metric
+             based on a certain number of recent sessions.
 
     :param interactions_path: Path to the CSV file containing user interactions data.
-                    The file should have columns 'user_id', 'interaction', 'cat2', and 'time'.
+                    The file should have columns 'user_id', 'interaction',
+                                             'item_id', 'cat2', and 'time'.
+    :param items_path: Path to the CSV file containing item metadata.
+                This file should have columns 'item_id' and 'cat2'.
     :param n_values: List of N values for which to compute UCI@N.
     :param session_limit: Number of most recent sessions to consider per user.
     :param eps: The time difference (in seconds) threshold to define a new session.
-    :param start_time: Optional. Start of the time interval as a string.
-    :param end_time: Optional. End of the time interval as a string.
     :return: A dictionary where keys are N values and values are the UCI@N metric.
     """
-    # Get the interactions DataFrame with session IDs
-    interactions_df = get_sessions(interactions_path, eps)
+    # Load data
+    interactions_df = get_sessions(
+        interactions_path, eps
+    )  # Add session IDs to interactions
+    items_df = pd.read_csv(items_path, sep=",")
+
+    # Ensure 'cat2' is mapped from items.csv where missing
+    interactions_df = interactions_df.merge(
+        items_df[["item_id", "cat2"]],
+        on="item_id",
+        how="left",
+        suffixes=("", "_from_items"),
+    )
+
+    # Fill missing 'cat2' from items.csv
+    if "cat2_from_items" in interactions_df.columns:
+        interactions_df["cat2"] = interactions_df["cat2"].combine_first(
+            interactions_df["cat2_from_items"]
+        )
+        interactions_df.drop(columns=["cat2_from_items"], inplace=True, errors="ignore")
 
     # Filter interactions to only include "likes" (interaction == 1)
     liked_interactions = interactions_df[interactions_df["interaction"] == 1]
