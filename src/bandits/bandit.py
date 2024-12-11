@@ -25,6 +25,7 @@ class Recommender:
         interactions_data_path,
         predicted_categories_path,
         top_k=1,
+        reward_interactions=30,
     ):
         """
         Initialize the recommender with item and interaction data,
@@ -36,11 +37,18 @@ class Recommender:
         """
         self.items_df = self.load_data(items_data_path)
         self.interactions_df = self.load_data(interactions_data_path)
+
+        items_mapping = self.items_df.set_index("item_id")["cat2"]
+        self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
+            items_mapping
+        )
+
         self.predicted_categories_map = self.extract_predicted_categories(
             predicted_categories_path
         )
         self.hierarchical_categories = self.extract_hierarchical_categories()
         self.available_categories = self.extract_available_categories()
+        self.reward_interactions = reward_interactions
         self.rec = BanditRecommender(LearningPolicy.ThompsonSampling(), top_k=top_k)
 
     def load_data(self, filename):
@@ -59,10 +67,35 @@ class Recommender:
             LOGGER.info(f"Error: File {filename} not found.")
             return pd.DataFrame()
 
+    def get_reward_users(self, old_users_statistics, new_users_statistics):
+        """
+        Compare old and new user statistics to find users whose interaction counts have changed,
+        considering a normalization factor of self.reward_interactions.
+
+        :return: A list of users who wll get reward
+        """
+        old_stats_df = old_users_statistics.rename("old_count").reset_index()
+        new_stats_df = new_users_statistics.rename("new_count").reset_index()
+        comparison_df = pd.merge(old_stats_df, new_stats_df, on="user_id", how="outer")
+        comparison_df.fillna(0, inplace=True)
+        comparison_df["old_count"] = comparison_df["old_count"].astype(int)
+        comparison_df["new_count"] = comparison_df["new_count"].astype(int)
+        comparison_df["old_normalized"] = (
+            comparison_df["old_count"] // self.reward_interactions
+        )
+        comparison_df["new_normalized"] = (
+            comparison_df["new_count"] // self.reward_interactions
+        )
+        changed_users = comparison_df[
+            comparison_df["new_normalized"] > comparison_df["old_normalized"]
+        ]
+        return changed_users
+
     def extract_predicted_categories(self, predicted_categories_path):
         """
         Extract predicted categories.
-        :return: None
+
+        :return: A dictionary representing the mapping of 2 user's categories to predicted one.
         """
         df = self.load_data(predicted_categories_path)
 
@@ -137,11 +170,6 @@ class Recommender:
             by="time", ascending=False
         )
 
-        items_mapping = self.items_df.set_index("item_id")["cat2"]
-        user_interactions_df["cat2"] = user_interactions_df["item_id"].map(
-            items_mapping
-        )
-
         last_liked_categories = user_interactions_df["cat2"].dropna().head(n).tolist()
 
         if len(last_liked_categories) < n:
@@ -199,9 +227,16 @@ class Recommender:
         :return: None
         """
         new_interactions_df = self.load_data(interactions_data_path)
+
         if new_interactions_df.empty:
             LOGGER.info("No new interactions data to fit.")
             return
+
+        old_users_statistics = self.interactions_df.groupby("user_id").size()
+        new_users_statistics = new_interactions_df.groupby("user_id").size()
+
+        LOGGER.info(f"Reward for old_users_statistics {old_users_statistics}")
+        LOGGER.info(f"Reward for new_users_statistics {new_users_statistics}")
 
         new_interactions_df["time"] = pd.to_datetime(new_interactions_df["time"])
 
@@ -227,6 +262,11 @@ class Recommender:
         LOGGER.info(
             f"Partial fit completed with {len(decisions_new)} new interactions."
         )
+
+        reward_users = self.get_reward_users(old_users_statistics, new_users_statistics)
+        reward_users = reward_users["user_id"].tolist()
+        LOGGER.info(f"Rewarded users: {reward_users}")
+        return reward_users
 
     def save(self):
         """

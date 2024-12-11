@@ -81,9 +81,10 @@ async def update(request: UpdateRequest):
     if RECOMMENDER is None:
         raise HTTPException(status_code=500, detail="Recommender model not loaded.")
     try:
-        RECOMMENDER.partial_fit(request.interactions_path)
-        return {"message": "Recommender updated successfully."}
-
+        rewarded_users = RECOMMENDER.partial_fit(request.interactions_path)
+        if rewarded_users is None:
+            return {"rewarded_users": []}
+        return {"rewarded_users": rewarded_users}
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
