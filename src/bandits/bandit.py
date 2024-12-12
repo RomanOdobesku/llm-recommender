@@ -2,6 +2,7 @@
 Class for a hierarchical bandit-based recommendation system.
 """
 
+import json
 import os
 import pickle
 import random
@@ -123,12 +124,14 @@ class Recommender:
 
         :return: A dictionary representing the mapping of 2 user's categories to predicted one.
         """
-        df = self.load_data(predicted_categories_path)
+        predicted_categories_map = {}
 
-        predicted_categories_map = {
-            (row["user_category_1"], row["user_category_2"]): row["matched_category"]
-            for _, row in df.iterrows()
-        }
+        with open(predicted_categories_path, "r", encoding="utf-8") as f:
+            predictions = json.load(f)
+
+        for prediction in predictions:
+            predicted_categories_map[(prediction[0], prediction[1])] = prediction[3]
+
         return predicted_categories_map
 
     def extract_hierarchical_categories(self) -> Dict[str, Dict[str, List[str]]]:
@@ -202,36 +205,56 @@ class Recommender:
 
         last_liked_categories = user_interactions_df["cat2"].dropna().head(n).tolist()
 
+        LOGGER.info(f"last_liked_categories: {last_liked_categories}")
+
         if len(last_liked_categories) < n:
             additional_categories = self.get_random_cat(n - len(last_liked_categories))
             last_liked_categories.extend(additional_categories)
 
+        LOGGER.info(f"Final User's liked categories: {last_liked_categories}")
         return last_liked_categories
 
-    def get_llm_selected_cat(self, user_id: int) -> str:
+    def get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
         """
-        Select a category using an LLM generated predictions.
+        Select `n` categories using an LLM generated predictions.
 
-        :return: A selected second-level category.
+        :param user_id: The ID of the user.
+        :param n: Number of categories to select.
+        :return: A list of selected second-level categories.
         """
-        user_cat21, user_cat22 = self.get_last_liked_categories(user_id)
-        predicted_cat = self.predicted_categories_map.get(
-            (user_cat21, user_cat22), self.get_random_cat(n=1)[0]
-        )
-        if predicted_cat not in self.available_categories:
-            LOGGER.error(f"Predicted category {predicted_cat} not in available categories")
-            predicted_cat = self.get_random_cat(n=1)[0]
-        return predicted_cat
+        LOGGER.info(f"Getting last liked categories for: {user_id}")
+        user_cat21, user_cat22 = self.get_last_liked_categories(user_id, n=2)[:2]
+        predicted_cats = self.predicted_categories_map.get((user_cat21, user_cat22))
 
-    def filter_items_by_cat(self, category: str) -> pd.DataFrame:
+        if predicted_cats:
+            selected_cats = predicted_cats[:n]
+        else:
+            selected_cats = []
+
+        LOGGER.info(f"Categories selected by LLM: {selected_cats}")
+
+        valid_cats = []
+        for cat in selected_cats:
+            if cat in self.available_categories:
+                valid_cats.append(cat)
+            else:
+                LOGGER.error(f"Predicted category {cat} not in available categories")
+
+        if len(valid_cats) < n:
+            additional_cats = self.get_random_cat(n - len(valid_cats))
+            valid_cats.extend(additional_cats)
+
+        return list(set(valid_cats))
+
+    def filter_items_by_cats(self, categories: List[str]) -> pd.DataFrame:
         """
-        Filter items by a second-level category.
+        Filter items by a list of second-level categories.
 
-        :param category: The category to filter items by.
+        :param categories: List of categories to filter items by.
         :return: A pandas DataFrame containing filtered items.
         """
-        LOGGER.info(f"Filtered by {category}")
-        filtered_df = self.items_df[self.items_df["cat2"] == category]
+        LOGGER.info(f"Filtered by categories: {categories}")
+        filtered_df = self.items_df[self.items_df["cat2"].isin(categories)]
         return filtered_df
 
     def fit(self) -> None:
@@ -322,19 +345,20 @@ class Recommender:
         except (OSError, IOError, pickle.PickleError) as e:
             LOGGER.error(f"Failed to save the model: {e}")
 
-    def predict(self, user_id: int, use_llm: bool = False) -> Optional[pd.DataFrame]:
+    def predict(
+        self, user_id: int, categories_n: int, use_llm: bool = False
+    ) -> Optional[pd.DataFrame]:
         """
         Make recommendations based on the specified category selection method.
 
         :param use_llm: Whether to use an LLM for category selection.
         :return: List of recommended items, or None if no items found.
         """
-        cat = (
-            self.get_llm_selected_cat(user_id)
-            if use_llm
-            else self.get_random_cat(n=1)[0]
-        )
-        filtered_items = self.filter_items_by_cat(cat)
+        if use_llm:
+            categories = self.get_llm_selected_cat(user_id, n=categories_n)
+        else:
+            categories = self.get_random_cat(n=categories_n)
+        filtered_items = self.filter_items_by_cats(categories)
         filtered_arms = filtered_items["item_id"].astype(str).tolist()
 
         if not filtered_arms:
