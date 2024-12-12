@@ -6,11 +6,30 @@ import os
 import pickle
 import random
 from datetime import datetime
+from typing import Dict, List, Optional
 
 import pandas as pd
 from mab2rec import BanditRecommender, LearningPolicy
 
 from src.logger import LOGGER
+
+
+class RecommenderConfig:
+    """
+    Configuration class for the Recommender system.
+    """
+
+    def __init__(self, top_k: int, reward_interactions: int) -> None:
+        self.top_k = top_k
+        self.reward_interactions = reward_interactions
+
+    def get_top_k(self) -> int:
+        """Return the top_k value."""
+        return self.top_k
+
+    def get_reward_interactions(self) -> int:
+        """Return the reward interactions value."""
+        return self.reward_interactions
 
 
 class Recommender:
@@ -21,37 +40,40 @@ class Recommender:
 
     def __init__(
         self,
-        items_data_path,
-        interactions_data_path,
-        predicted_categories_path,
-        top_k=1,
-        reward_interactions=30,
-    ):
+        items_data_path: str,
+        interactions_data_path: str,
+        predicted_categories_path: str,
+        config: RecommenderConfig,
+    ) -> None:
         """
         Initialize the recommender with item and interaction data,
         and inherit from BanditRecommender.
 
         :param items_data_path: Path to the CSV file containing item data.
         :param interactions_data_path: Path to the CSV file containing interaction data.
-        :param top_k: Number of top recommendations to return.
+        :param config: Configuration object for recommender settings.
         """
-        self.items_df = self.load_data(items_data_path)
-        self.interactions_df = self.load_data(interactions_data_path)
+        self.items_df: pd.DataFrame = self.load_data(items_data_path)
+        self.interactions_df: pd.DataFrame = self.load_data(interactions_data_path)
 
         items_mapping = self.items_df.set_index("item_id")["cat2"]
         self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
             items_mapping
         )
 
-        self.predicted_categories_map = self.extract_predicted_categories(
-            predicted_categories_path
+        self.predicted_categories_map: Dict[tuple, str] = (
+            self.extract_predicted_categories(predicted_categories_path)
         )
-        self.hierarchical_categories = self.extract_hierarchical_categories()
-        self.available_categories = self.extract_available_categories()
-        self.reward_interactions = reward_interactions
-        self.rec = BanditRecommender(LearningPolicy.ThompsonSampling(), top_k=top_k)
+        self.hierarchical_categories: Dict[str, Dict[str, List[str]]] = (
+            self.extract_hierarchical_categories()
+        )
+        self.available_categories: List[str] = self.extract_available_categories()
+        self.reward_interactions: int = config.get_reward_interactions()
+        self.rec: BanditRecommender = BanditRecommender(
+            LearningPolicy.ThompsonSampling(), top_k=config.get_top_k()
+        )
 
-    def load_data(self, filename):
+    def load_data(self, filename: str) -> pd.DataFrame:
         """
         Load data from a CSV file into a pandas DataFrame.
 
@@ -67,12 +89,14 @@ class Recommender:
             LOGGER.info(f"Error: File {filename} not found.")
             return pd.DataFrame()
 
-    def get_reward_users(self, old_users_statistics, new_users_statistics):
+    def get_reward_users(
+        self, old_users_statistics: pd.Series, new_users_statistics: pd.Series
+    ) -> List[int]:
         """
         Compare old and new user statistics to find users whose interaction counts have changed,
         considering a normalization factor of self.reward_interactions.
 
-        :return: A list of users who wll get reward
+        :return: A list of users who will get reward.
         """
         old_stats_df = old_users_statistics.rename("old_count").reset_index()
         new_stats_df = new_users_statistics.rename("new_count").reset_index()
@@ -89,9 +113,11 @@ class Recommender:
         changed_users = comparison_df[
             comparison_df["new_normalized"] > comparison_df["old_normalized"]
         ]
-        return changed_users
+        return changed_users["user_id"].tolist()
 
-    def extract_predicted_categories(self, predicted_categories_path):
+    def extract_predicted_categories(
+        self, predicted_categories_path: str
+    ) -> Dict[tuple, str]:
         """
         Extract predicted categories.
 
@@ -105,14 +131,14 @@ class Recommender:
         }
         return predicted_categories_map
 
-    def extract_hierarchical_categories(self):
+    def extract_hierarchical_categories(self) -> Dict[str, Dict[str, List[str]]]:
         """
         Extract hierarchical categories from the items DataFrame.
 
         :return: A dictionary representing the hierarchical category structure.
         """
 
-        hierarchical_categories = {}
+        hierarchical_categories: Dict[str, Dict[str, List[str]]] = {}
         for _, row in self.items_df.iterrows():
             cat1, cat2, cat3 = row["cat1"], row["cat2"], row["cat3"]
             hierarchical_categories.setdefault(cat1, {}).setdefault(cat2, []).append(
@@ -126,21 +152,21 @@ class Recommender:
         LOGGER.info(hierarchical_categories)
         return hierarchical_categories
 
-    def extract_available_categories(self):
+    def extract_available_categories(self) -> List[str]:
         """
         Extract as list all second-level categories available within
         the hierarchical categories structure.
 
         :return: A list of second-level categories available in the hierarchical structure.
         """
-        available_categories = [
+        available_categories: List[str] = [
             cat2
             for _, cat2_dict in self.hierarchical_categories.items()
             for cat2 in cat2_dict
         ]
         return available_categories
 
-    def get_random_cat(self, n=1):
+    def get_random_cat(self, n: int = 1) -> List[str]:
         """
         Randomly select `n` second-level categories.
 
@@ -156,7 +182,7 @@ class Recommender:
             n = min(n, len(self.available_categories))
         return random.sample(self.available_categories, n)
 
-    def get_last_liked_categories(self, user_id, n=2):
+    def get_last_liked_categories(self, user_id: int, n: int = 2) -> List[str]:
         """
         Retrieve the last `n` liked categories for a given user.
 
@@ -182,7 +208,7 @@ class Recommender:
 
         return last_liked_categories
 
-    def get_llm_selected_cat(self, user_id):
+    def get_llm_selected_cat(self, user_id: int) -> str:
         """
         Select a category using an LLM generated predictions.
 
@@ -194,7 +220,7 @@ class Recommender:
         )
         return predicted_cat
 
-    def filter_items_by_cat(self, category):
+    def filter_items_by_cat(self, category: str) -> pd.DataFrame:
         """
         Filter items by a second-level category.
 
@@ -205,7 +231,7 @@ class Recommender:
         filtered_df = self.items_df[self.items_df["cat2"] == category]
         return filtered_df
 
-    def fit(self):
+    def fit(self) -> None:
         """
         Train the recommender using initial interaction data.
 
@@ -223,7 +249,7 @@ class Recommender:
 
         LOGGER.info(f"Fit completed with {len(decisions)} interactions.")
 
-    def partial_fit(self, interactions_data_path):
+    def partial_fit(self, interactions_data_path: str) -> Optional[List[int]]:
         """
         Perform incremental training using new interaction data.
         Only considers interactions that occurred after the latest time
@@ -270,11 +296,10 @@ class Recommender:
         )
 
         reward_users = self.get_reward_users(old_users_statistics, new_users_statistics)
-        reward_users = reward_users["user_id"].tolist()
         LOGGER.info(f"Rewarded users: {reward_users}")
         return reward_users
 
-    def save(self):
+    def save(self) -> None:
         """
         Save the trained model to the models directory with a timestamped filename.
 
@@ -294,7 +319,7 @@ class Recommender:
         except (OSError, IOError, pickle.PickleError) as e:
             LOGGER.error(f"Failed to save the model: {e}")
 
-    def predict(self, user_id, use_llm=False):
+    def predict(self, user_id: int, use_llm: bool = False) -> Optional[pd.DataFrame]:
         """
         Make recommendations based on the specified category selection method.
 
