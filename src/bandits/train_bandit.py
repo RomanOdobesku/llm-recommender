@@ -8,5 +8,6 @@ if __name__ == "__main__":
     recommender = Recommender(
         items_data_path="./data/items.csv",
         interactions_data_path="./data/interactions.csv",
+        predicted_categories_path="./data/predicted_categories.csv",
     )
     recommender.fit()

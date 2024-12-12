@@ -43,6 +43,7 @@ except FileNotFoundError:
 class RecommendRequest(BaseModel):
     """Request model for recommend endpoint."""
 
+    user_id: str
     use_llm: bool = False
 
 
@@ -64,7 +65,9 @@ async def recommend(request: RecommendRequest):
     if RECOMMENDER is None:
         raise HTTPException(status_code=500, detail="Recommender model not loaded.")
     try:
-        recommendations = RECOMMENDER.predict(use_llm=request.use_llm)
+        recommendations = RECOMMENDER.predict(
+            user_id=request.user_id, use_llm=request.use_llm
+        )
         if recommendations is None or recommendations.empty:
             return {"recommendations": []}
         return {"recommendations": recommendations.to_dict(orient="records")}
@@ -78,13 +81,13 @@ async def update(request: UpdateRequest):
     if RECOMMENDER is None:
         raise HTTPException(status_code=500, detail="Recommender model not loaded.")
     try:
-        RECOMMENDER.partial_fit(request.interactions_path)
-        return {"message": "Recommender updated successfully."}
-
+        rewarded_users = RECOMMENDER.partial_fit(request.interactions_path)
+        if rewarded_users is None:
+            return {"rewarded_users": []}
+        return {"rewarded_users": rewarded_users}
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 if __name__ == "__main__":
-    port = int(os.environ["FAST_API_PORT"])
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
