@@ -126,7 +126,7 @@ class Recommender:
         df = self.load_data(predicted_categories_path)
 
         predicted_categories_map = {
-            (row["user_category_1"], row["user_category_2"]): row["predicted_category"]
+            (row["user_category_1"], row["user_category_2"]): row["matched_category"]
             for _, row in df.iterrows()
         }
         return predicted_categories_map
