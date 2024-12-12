@@ -2,28 +2,10 @@
 Module for metrics calculations.
 """
 
+import json
+
 import numpy as np
 import pandas as pd
-
-
-def coverage_metric(interactions_path: str, items_path: str) -> float:
-    """
-    Calculate the coverage metric for recommendations.
-
-    :param interactions_path: Path to the CSV file containing user interactions data.
-    :param items_path: Path to the CSV file containing the catalog of all items.
-    :return: Coverage metric as a float between 0 and 1, indicating the proportion
-             of catalog items covered by the recommendations.
-    """
-    interactions_df = pd.read_csv(interactions_path)
-    items_df = pd.read_csv(items_path)
-    recommended_items = set(interactions_df["item_id"])
-    total_items = set(items_df["item_id"])
-
-    coverage = (
-        len(recommended_items & total_items) / len(total_items) if total_items else 0
-    )
-    return coverage
 
 
 def get_sessions(
@@ -73,6 +55,54 @@ def get_sessions(
     return interactions_df
 
 
+def merge_item_cat2(
+    interactions_df: pd.DataFrame,
+    items_path: str,
+) -> pd.DataFrame:
+    """
+    Merge items from interactions_df with their item_id from items file.
+    """
+    # Load data
+    items_df = pd.read_csv(items_path, sep=",")
+
+    # Ensure 'cat2' is mapped from items.csv where missing
+    interactions_df = interactions_df.merge(
+        items_df[["item_id", "cat2"]],
+        on="item_id",
+        how="left",
+        suffixes=("", "_from_items"),
+    )
+
+    # Fill missing 'cat2' from items.csv
+    if "cat2_from_items" in interactions_df.columns:
+        interactions_df["cat2"] = interactions_df["cat2"].combine_first(
+            interactions_df["cat2_from_items"]
+        )
+        interactions_df.drop(columns=["cat2_from_items"], inplace=True, errors="ignore")
+
+    return interactions_df
+
+
+def coverage_metrics(interactions_path: str, items_path: str) -> float:
+    """
+    Calculate the coverage metric for recommendations.
+
+    :param interactions_path: Path to the CSV file containing user interactions data.
+    :param items_path: Path to the CSV file containing the catalog of all items.
+    :return: Coverage metric as a float between 0 and 1, indicating the proportion
+             of catalog items covered by the recommendations.
+    """
+    interactions_df = pd.read_csv(interactions_path)
+    items_df = pd.read_csv(items_path)
+    recommended_items = set(interactions_df["item_id"])
+    total_items = set(items_df["item_id"])
+
+    coverage = (
+        len(recommended_items & total_items) / len(total_items) if total_items else 0
+    )
+    return coverage
+
+
 def average_session_length(
     interactions_path: str, eps: int, start_time: str = None, end_time: str = None
 ) -> tuple:
@@ -113,13 +143,13 @@ def compute_mean_ratios(
     interactions_path: str, eps: int, start_time: str = None, end_time: str = None
 ) -> float:
     """
-    Compute the global mean ratio of likes to total interactions per session.
+    Compute the mean ratio of likes to total interactions per session.
 
     :param interactions_path: Path to the CSV file containing user interactions data.
     :param eps: The time difference (in seconds) threshold to define a new session.
     :param start_time: Optional. Start of the time interval as a string.
     :param end_time: Optional. End of the time interval as a string.
-    :return: The global mean ratio of likes (likes / (likes + dislikes)) as a float.
+    :return: The mean ratio of likes (likes / (likes + dislikes)) as a float.
     """
     interactions_df = get_sessions(interactions_path, eps, start_time, end_time)
 
@@ -144,7 +174,7 @@ def compute_mean_ratios(
     return global_mean_ratio
 
 
-def novelty_metric(interactions_path: str) -> float:
+def novelty_metrics(interactions_path: str) -> float:
     """
     Calculate the novelty metric for recommendations based on interaction data.
 
@@ -176,37 +206,7 @@ def novelty_metric(interactions_path: str) -> float:
     return novelty
 
 
-def match_rate(predictions: dict, cluster_descriptions_path: str) -> float:
-    """
-    Calculate the match rate of predictions with cluster descriptions.
-
-    :param predictions: List of generated outputs from the LLM.
-    :param cluster_descriptions: List of valid cluster descriptions.
-    :return: Match rate as a float.
-    """
-    cluster_descriptions = pd.read_csv(cluster_descriptions_path, sep=";")
-    cluster_descriptions = cluster_descriptions["sub_cat_name"].unique()
-    matches = sum(1 for pred in predictions.values() if pred in cluster_descriptions)
-
-    return matches / len(predictions) if predictions else 0
-
-
-def recall(predictions: dict, interactions_path: str) -> float:
-    """
-    Calculate recall for user interest transitions.
-
-    :param predictions: List of generated outputs from the LLM.
-    :param interactions_path: List of successful user interest transitions.
-    :return: Recall as a float.
-    """
-    interactions_df = pd.read_csv(interactions_path)
-    actual_transitions = interactions_df[interactions_df["interaction"] == 1]
-    matches = sum(1 for pred in predictions if pred in actual_transitions)
-
-    return matches / len(actual_transitions) if actual_transitions else 0
-
-
-def calculate_uci_at_n_sessions(
+def uci_n(
     interactions_path: str,
     items_path: str,
     n_values: list,
@@ -231,22 +231,8 @@ def calculate_uci_at_n_sessions(
     interactions_df = get_sessions(
         interactions_path, eps
     )  # Add session IDs to interactions
-    items_df = pd.read_csv(items_path, sep=",")
 
-    # Ensure 'cat2' is mapped from items.csv where missing
-    interactions_df = interactions_df.merge(
-        items_df[["item_id", "cat2"]],
-        on="item_id",
-        how="left",
-        suffixes=("", "_from_items"),
-    )
-
-    # Fill missing 'cat2' from items.csv
-    if "cat2_from_items" in interactions_df.columns:
-        interactions_df["cat2"] = interactions_df["cat2"].combine_first(
-            interactions_df["cat2_from_items"]
-        )
-        interactions_df.drop(columns=["cat2_from_items"], inplace=True, errors="ignore")
+    interactions_df = merge_item_cat2(interactions_df, items_path)
 
     # Filter interactions to only include "likes" (interaction == 1)
     liked_interactions = interactions_df[interactions_df["interaction"] == 1]
@@ -279,3 +265,120 @@ def calculate_uci_at_n_sessions(
         uci_at_n[n] = len(users_with_n_clusters)
 
     return uci_at_n
+
+
+def precision(predictions_path: str, interactions_path: str):
+    """
+    Calculate the precision of predictions based on actual user interactions.
+
+    Precision is defined as the ratio of true positive predictions to the total number
+    of predictions made (true positives + false positives).
+
+    :param predictions_path: Path to the JSON file containing predictions.
+                             The file should be in the format:
+                             [
+                                 ["user_category_1", "user_category_2", "predicted_category"],
+                                 ...
+                             ]
+                             where `predicted_category` is a semicolon-separated string.
+
+    :param interactions_path: Path to the CSV file containing actual user interactions.
+                              The file should contain columns:
+                              - "user_category_1"
+                              - "user_category_2"
+                              - "user_category_3"
+                              where `user_category_3` represents the ground truth categories
+                              as a single value per row.
+
+    :return: Precision as a float value [0, 1].
+    """
+    # Step 1: Load the JSON file
+    with open(predictions_path, "r", encoding="utf-8") as f:
+        json_data = json.load(f)
+
+    # Convert JSON into a DataFrame
+    predicted_data = pd.DataFrame(
+        json_data, columns=["user_category_1", "user_category_2", "predicted_category"]
+    )
+
+    actual_data = pd.read_csv(interactions_path, sep=",")
+
+    # Step 3: Merge data on user_category_1 and user_category_2
+
+    actual_test_data = pd.merge(
+        actual_data,
+        predicted_data,
+        on=["user_category_1", "user_category_2"],
+        how="inner",
+    )
+    # Convert user_category_3 into list for the same pairs
+    actual_test_data = actual_test_data.groupby(
+        ["user_category_1", "user_category_2"], as_index=False
+    ).agg({"user_category_3": list, "predicted_category": "first"})
+
+    # Convert semicolon-separated predicted_category into a list
+    actual_test_data["predicted_category"] = actual_test_data[
+        "predicted_category"
+    ].apply(lambda x: x.split("; "))
+
+    # Compare user_category_3 (list) and predicted_category (list)
+    actual_test_data["is_correct"] = actual_test_data.apply(
+        lambda row: any(
+            pred in row["user_category_3"] for pred in row["predicted_category"]
+        ),
+        axis=1,
+    )
+    # Step 5: Compute Precision
+    true_positives = actual_test_data["is_correct"].sum()
+    false_positive = (~actual_test_data["is_correct"]).sum()
+
+    # Avoid division by zero
+    precision_value = (
+        true_positives / (true_positives + false_positive)
+        if (true_positives + false_positive) > 0
+        else 0
+    )
+
+    return precision_value
+
+
+def match_rate(predictions_path: str, cluster_descriptions_path: str) -> float:
+    """
+    Calculate the match rate of predictions with cluster descriptions.
+    Match rate is calculated as the proportion of predicted categories
+    that exist in the cluster descriptions.
+
+    :param predictions_path: Path to a JSON file containing predictions in the specified format.
+                             Format: [
+                                 ["category_1", "category_2", "predicted_category; ..."],
+                                 ...
+                             ]
+    :param cluster_descriptions_path: Path to a JSON file containing valid cluster descriptions.
+                                       Format: ["description_1", "description_2", ...]
+    :return: Match rate as a float (between 0 and 1).
+    """
+    # Load predictions
+    with open(predictions_path, "r", encoding="utf-8") as f:
+        predictions = json.load(f)
+
+    # Load cluster descriptions
+    with open(cluster_descriptions_path, "r", encoding="utf-8") as f:
+        cluster_descriptions = set(json.load(f))  # Convert to set for faster lookups
+
+    # Initialize match counters
+    total_matches = 0  # Total number of matches
+    total_categories = 0  # Total number of predicted categories
+
+    # Process predictions
+    for prediction in predictions:
+        # Extract the predicted categories and split by semicolon
+        predicted_categories = prediction[2].split("; ")
+
+        # Count matches and total predicted categories
+        total_matches += sum(
+            1 for pred in predicted_categories if pred in cluster_descriptions
+        )
+        total_categories += len(predicted_categories)
+
+    # Calculate match rate
+    return total_matches / total_categories if total_categories > 0 else 0.0
