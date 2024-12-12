@@ -2,7 +2,9 @@
 
 import os
 import csv
+from collections import defaultdict
 from datetime import datetime
+import secrets
 import pandas as pd
 import telebot
 from telebot import types
@@ -11,12 +13,32 @@ from .reqs import (Item, get_product_for_user,  # pylint: disable=relative-beyon
                    update_interactions,  # pylint: disable=relative-beyond-top-level
                    escape_description)  # pylint: disable=relative-beyond-top-level
 
+USERS_TO_REWARD = defaultdict(int)
+USER_REWARD_FILE = "./data/rewards.txt"
+
+with open(USER_REWARD_FILE, "a", encoding="utf-8") as f1:
+    pass
+
+with open(USER_REWARD_FILE, 'r+', encoding="utf-8") as f1:
+    for line in f1.readlines():
+        line = line.strip()
+        args = line.split()
+        if len(args) != 2:
+            continue
+        uid = args[0]
+        if args[1] == "0":
+            USERS_TO_REWARD[uid] += 1
+        else:
+            USERS_TO_REWARD[uid] -= 1
+            if USERS_TO_REWARD[uid] <= 0:
+                USERS_TO_REWARD.pop(uid)
+
 INTERACTION_COUNTER = 0
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
 
 
-def send_user_recommendation(chat_id: str, recommendation: Item):
+def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     """
     Func to send_user_recommendation
 
@@ -41,7 +63,20 @@ def send_user_recommendation(chat_id: str, recommendation: Item):
     bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
                    reply_markup=markup_inline, parse_mode="MarkdownV2")
     if INTERACTION_COUNTER % 20 == 0:
-        update_interactions(os.path.abspath("./data/interactions.csv"))
+        users = update_interactions(os.path.abspath("./data/interactions.csv"))
+        with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f2:
+            for user in users:
+                USERS_TO_REWARD[user] += 1
+                f2.writelines([f"{user_id} 0\n"])
+    if user_id in USERS_TO_REWARD.keys():
+        hsh = secrets.token_hex(nbytes=16)[:15]
+        bot.send_message(chat_id,
+                         f"Поздравляю с усердной работой! Ваш токен: {hsh}.erg. Спасибо!")
+        USERS_TO_REWARD[user_id] -= 1
+        if USERS_TO_REWARD[user_id] == 0:
+            USERS_TO_REWARD.pop(user_id)
+        with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f3:
+            f3.writelines([f"{user_id} {hsh}\n"])
 
 
 @bot.message_handler(commands=['start'])
@@ -56,7 +91,7 @@ def start_handler(message):
                      "Привет, это бот который поможет выбирать товары на Ozon."
                      "Тебе просто надо лайкать любимые товары")
     product = get_product_for_user(message.from_user.id)
-    send_user_recommendation(message.chat.id, product)
+    send_user_recommendation(message.from_user.id, message.chat.id, product)
 
 
 @bot.message_handler(commands=['help'])
@@ -111,7 +146,7 @@ def callback_inline(call):
         writer = csv.writer(f)
         writer.writerow(fields)
     product = get_product_for_user(user_id)
-    send_user_recommendation(call.message.chat.id, product)
+    send_user_recommendation(user_id, call.message.chat.id, product)
     new_caption = call.message.caption + text
     bot.edit_message_caption(caption=new_caption, chat_id=call.message.chat.id,
                              message_id=call.message.message_id,

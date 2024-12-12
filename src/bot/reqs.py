@@ -66,6 +66,7 @@ def get_product_for_user(user_id: str) -> Item:
 
     data = {
         "use_llm": False,
+        "user_id": user_id,
     }
 
     response = requests.post(url, json=data, timeout=10)
@@ -73,7 +74,7 @@ def get_product_for_user(user_id: str) -> Item:
     LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")
 
     items = [Item(item["item_id"], item["img_url"], item["url"],
-                  ItemInfo(item["cat1"], item["title"], item["price"]))
+                  ItemInfo(item["cat2"], item["title"], item["price"]))
              for item in response.json()["recommendations"]]
     return items[0]
 
@@ -95,3 +96,4 @@ def update_interactions(path: str):
     response = requests.post(url, json=data, timeout=10)
 
     LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")
+    return response.json()["rewarded_users"]

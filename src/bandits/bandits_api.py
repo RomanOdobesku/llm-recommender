@@ -43,7 +43,7 @@ except FileNotFoundError:
 class RecommendRequest(BaseModel):
     """Request model for recommend endpoint."""
 
-    user_id: str
+    user_id: int
     use_llm: bool = False
 
 
