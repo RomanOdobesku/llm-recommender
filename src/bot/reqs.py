@@ -2,12 +2,14 @@
 
 import os
 import random
+from collections import defaultdict
 
 import requests
 from src.logger import LOGGER  # pylint: disable=import-error
 
 port = int(os.environ["FAST_API_PORT"])
 session = requests.Session()
+USER_RECOMMEND = defaultdict(list)
 
 
 class ItemInfo:
@@ -62,6 +64,11 @@ def get_product_for_user(user_id: str) -> Item:
     :param user_id: user_id get id of user to get a recommendations
     :return recommendation for a user
     """
+    global USER_RECOMMEND
+    if len(USER_RECOMMEND[user_id]) != 0:
+        item = USER_RECOMMEND[user_id][0]
+        USER_RECOMMEND[user_id] = USER_RECOMMEND[user_id][1:]
+        return item
 
     LOGGER.info(f"get a product for user {user_id}")
 
@@ -82,6 +89,7 @@ def get_product_for_user(user_id: str) -> Item:
     items = [Item(item["item_id"], item["img_url"], item["url"],
                   ItemInfo(item["cat2"], item["title"], item["price"]))
              for item in response.json()["recommendations"]]
+    USER_RECOMMEND[user_id] = items[1:]
     return items[0]
 
 
