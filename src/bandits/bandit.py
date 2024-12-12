@@ -82,7 +82,7 @@ class Recommender:
         :raises FileNotFoundError: If the file does not exist.
         """
         try:
-            df = pd.read_csv(filename, sep=",")
+            df = pd.read_csv(filename, sep=";")
             LOGGER.info(f"Dataset loaded from {filename}")
             return df
         except FileNotFoundError:
@@ -218,6 +218,9 @@ class Recommender:
         predicted_cat = self.predicted_categories_map.get(
             (user_cat21, user_cat22), self.get_random_cat(n=1)[0]
         )
+        if predicted_cat not in self.available_categories:
+            LOGGER.error(f"Predicted category {predicted_cat} not in available categories")
+            predicted_cat = self.get_random_cat(n=1)[0]
         return predicted_cat
 
     def filter_items_by_cat(self, category: str) -> pd.DataFrame:
@@ -351,5 +354,5 @@ class Recommender:
             self.items_df["item_id"].isin(recommended_ids)
         ]
 
-        LOGGER.info(f"Recommended items: {recommended_items.item_id.unique()}")
+        LOGGER.info(f"Recommended items: {recommended_items.item_id.tolist()}")
         return recommended_items
