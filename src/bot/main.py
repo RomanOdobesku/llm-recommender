@@ -55,7 +55,7 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     item_no = types.InlineKeyboardButton(text='Нравится',
                                          callback_data=f"yes {recommendation.item_id}")
     markup_inline.add(item_yes, item_no)
-    photo_caption = (f"Категория: {recommendation.info.category}\n"
+    photo_caption = (f"Категория: {escape_description(recommendation.info.category)}\n"
                      f"Описание: {escape_description(recommendation.info.description)}\n"
                      f"Цена: {escape_description(str(recommendation.info.price))}\n"
                      f"[ссылка]({recommendation.link})")
