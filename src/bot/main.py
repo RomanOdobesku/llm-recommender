@@ -33,7 +33,7 @@ with open(USER_REWARD_FILE, 'r+', encoding="utf-8") as f1:
             if USERS_TO_REWARD[uid] <= 0:
                 USERS_TO_REWARD.pop(uid)
 
-INTERACTION_COUNTER = 0
+INTERACTION_DATETIME = datetime.now()
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
 
@@ -45,8 +45,7 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     :param chat_id: chat id to send recommendation
     :param recommendation: recommendation to send
     """
-    global INTERACTION_COUNTER  # pylint: disable=global-statement
-    INTERACTION_COUNTER = INTERACTION_COUNTER + 1
+    global INTERACTION_DATETIME  # pylint: disable=global-statement
 
     LOGGER.info(f"send product {recommendation} for chat {chat_id}")
     markup_inline = types.InlineKeyboardMarkup()
@@ -62,7 +61,9 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     LOGGER.info(f"photo_caption: {photo_caption}")
     bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
                    reply_markup=markup_inline, parse_mode="MarkdownV2")
-    if INTERACTION_COUNTER % 20 == 0:
+    time = datetime.now()
+    if (time - INTERACTION_DATETIME).total_seconds() > 30:
+        INTERACTION_DATETIME = time
         users = update_interactions(os.path.abspath("./data/interactions.csv"))
         with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f2:
             for user in users:
@@ -77,7 +78,6 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
             USERS_TO_REWARD.pop(user_id)
         with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f3:
             f3.writelines([f"{user_id} {hsh}\n"])
-
 
 @bot.message_handler(commands=['start'])
 def start_handler(message):
@@ -120,7 +120,6 @@ def reset_handler(message):
 
     bot.send_message(message.chat.id, "Удалили вашу историю")
 
-
 @bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
     """
@@ -140,17 +139,20 @@ def callback_inline(call):
         item_id = int(call.data[len("no "):])
         text = "\nВам не понравился этот товар😅"
         LOGGER.info(f"add negative reward for user {user_id} item {item_id}")
-    bot.answer_callback_query(call.id, "Учли ваш выбор")
+    # bot.answer_callback_query(call.id, "Учли ваш выбор")
     fields = [datetime.now(), user_id, item_id, interaction]
     with open("./data/interactions.csv", 'a', encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(fields)
     product = get_product_for_user(user_id)
     send_user_recommendation(user_id, call.message.chat.id, product)
-    new_caption = call.message.caption + text
-    bot.edit_message_caption(caption=new_caption, chat_id=call.message.chat.id,
+    try:
+        new_caption = call.message.caption + text
+        bot.edit_message_caption(caption=new_caption, chat_id=call.message.chat.id,
                              message_id=call.message.message_id,
                              reply_markup='', caption_entities=call.message.caption_entities)
+    except Exception as error:
+        LOGGER.error(str(error))
 
 
 print("start a bot")

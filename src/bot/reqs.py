@@ -1,10 +1,13 @@
 """ file to send requests to bandits """
 
 import os
+import random
+
 import requests
 from src.logger import LOGGER  # pylint: disable=import-error
 
 port = int(os.environ["FAST_API_PORT"])
+session = requests.Session()
 
 
 class ItemInfo:
@@ -46,7 +49,7 @@ def escape_description(text: str):
     :return formated text for markdownv2
     """
     symbols = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-',
-               '=', '|', '{', '}', '.', '!']
+               '=', '|', '{', '}', '.', '!', ':']
     for symbol in symbols:
         text = text.replace(symbol, '\\' + symbol)
     return text
@@ -69,7 +72,10 @@ def get_product_for_user(user_id: str) -> Item:
         "user_id": user_id,
     }
 
-    response = requests.post(url, json=data, timeout=10)
+    if random.random() < 0.9:
+        data["use_llm"] = True
+
+    response = session.post(url, json=data, timeout=10)
 
     LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")
 
@@ -93,7 +99,7 @@ def update_interactions(path: str):
         "interactions_path": path,
     }
 
-    response = requests.post(url, json=data, timeout=10)
+    response = session.post(url, json=data, timeout=10)
 
     LOGGER.info(f"Status Code {response.status_code} JSON responce {response.json()} ")
     return response.json()["rewarded_users"]
