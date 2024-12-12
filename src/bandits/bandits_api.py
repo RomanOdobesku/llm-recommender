@@ -44,7 +44,6 @@ class RecommendRequest(BaseModel):
     """Request model for recommend endpoint."""
 
     user_id: int
-    categories_n: int
     use_llm: bool = False
 
 
@@ -68,7 +67,6 @@ async def recommend(request: RecommendRequest):
     try:
         recommendations = RECOMMENDER.predict(
             user_id=request.user_id,
-            categories_n=request.categories_n,
             use_llm=request.use_llm,
         )
         if recommendations is None or recommendations.empty:

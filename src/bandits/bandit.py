@@ -20,9 +20,10 @@ class RecommenderConfig:
     Configuration class for the Recommender system.
     """
 
-    def __init__(self, top_k: int, reward_interactions: int) -> None:
+    def __init__(self, top_k: int, reward_interactions: int, categories_n: int) -> None:
         self.top_k = top_k
         self.reward_interactions = reward_interactions
+        self.categories_n = categories_n
 
     def get_top_k(self) -> int:
         """Return the top_k value."""
@@ -31,6 +32,10 @@ class RecommenderConfig:
     def get_reward_interactions(self) -> int:
         """Return the reward interactions value."""
         return self.reward_interactions
+
+    def get_categories_n(self) -> int:
+        """Return the categories_n value."""
+        return self.categories_n
 
 
 class Recommender:
@@ -70,6 +75,7 @@ class Recommender:
         )
         self.available_categories: List[str] = self.extract_available_categories()
         self.reward_interactions: int = config.get_reward_interactions()
+        self.categories_n = config.get_categories_n()
         self.rec: BanditRecommender = BanditRecommender(
             LearningPolicy.ThompsonSampling(), top_k=config.get_top_k()
         )
@@ -203,7 +209,9 @@ class Recommender:
             by="time", ascending=False
         )
 
-        last_liked_categories = user_interactions_df["cat2"].dropna().head(n).tolist()
+        last_liked_categories = (
+            user_interactions_df["cat2"].dropna().unique().tolist()[:n]
+        )
 
         LOGGER.info(f"last_liked_categories: {last_liked_categories}")
 
@@ -345,9 +353,7 @@ class Recommender:
         except (OSError, IOError, pickle.PickleError) as e:
             LOGGER.error(f"Failed to save the model: {e}")
 
-    def predict(
-        self, user_id: int, categories_n: int, use_llm: bool = False
-    ) -> Optional[pd.DataFrame]:
+    def predict(self, user_id: int, use_llm: bool = False) -> Optional[pd.DataFrame]:
         """
         Make recommendations based on the specified category selection method.
 
@@ -355,9 +361,9 @@ class Recommender:
         :return: List of recommended items, or None if no items found.
         """
         if use_llm:
-            categories = self.get_llm_selected_cat(user_id, n=categories_n)
+            categories = self.get_llm_selected_cat(user_id, n=self.categories_n)
         else:
-            categories = self.get_random_cat(n=categories_n)
+            categories = self.get_random_cat(n=self.categories_n)
         filtered_items = self.filter_items_by_cats(categories)
         filtered_arms = filtered_items["item_id"].astype(str).tolist()
 
