@@ -142,7 +142,7 @@ def callback_inline(call):
     # bot.answer_callback_query(call.id, "Учли ваш выбор")
     fields = [datetime.now(), user_id, item_id, interaction]
     with open("./data/interactions.csv", 'a', encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow(fields)
     product = get_product_for_user(user_id)
     send_user_recommendation(user_id, call.message.chat.id, product)
