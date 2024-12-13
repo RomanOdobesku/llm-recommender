@@ -100,9 +100,9 @@ class Recommender:
         self.items_df: pd.DataFrame = self.load_data(items_data_path)
         self.interactions_df: pd.DataFrame = self.load_data(interactions_data_path)
 
-        items_mapping = self.items_df.set_index("item_id")["cat2"]
+        self.items_mapping = self.items_df.set_index("item_id")["cat2"]
         self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
-            items_mapping
+            self.items_mapping
         )
 
         self.predicted_categories_map: Dict[tuple, str] = (
@@ -244,12 +244,15 @@ class Recommender:
             & (self.interactions_df["interaction"] == 1)
         ]
 
+        LOGGER.info(f"user_interactions_df: {user_interactions_df}")
+
         user_interactions_df = user_interactions_df.sort_values(
             by="time", ascending=False
         )
+        LOGGER.info(f"user_interactions_df: {user_interactions_df}")
 
         last_liked_categories = (
-            user_interactions_df["cat2"].dropna().unique().tolist()[:n]
+            user_interactions_df["cat2"].dropna().tolist()[:n]
         )
 
         LOGGER.info(f"last_liked_categories: {last_liked_categories}")
@@ -271,7 +274,7 @@ class Recommender:
         """
         LOGGER.info(f"Getting last liked categories for: {user_id}")
         user_cat21, user_cat22 = self.get_last_liked_categories(user_id, n=2)[:2]
-        predicted_cats = self.predicted_categories_map.get((user_cat21, user_cat22))
+        predicted_cats = self.predicted_categories_map.get((user_cat22, user_cat21))
 
         if predicted_cats:
             selected_cats = predicted_cats[:n]
@@ -356,9 +359,13 @@ class Recommender:
             LOGGER.info("No new interactions after the latest time.")
             return None
 
+        new_interactions_df["cat2"] = new_interactions_df["item_id"].map(
+            self.items_mapping
+        )
         self.interactions_df = pd.concat(
             [self.interactions_df, new_interactions_df], ignore_index=True
         )
+        
         decisions_new = new_interactions_df["item_id"].astype(str).tolist()
         rewards_new = new_interactions_df["interaction"].tolist()
         self.rec.partial_fit(decisions_new, rewards_new)
