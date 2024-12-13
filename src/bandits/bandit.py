@@ -9,12 +9,12 @@ import random
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+import gc
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from mab2rec import BanditRecommender, LearningPolicy
-from pandas._config import config
 
 from src.logger import LOGGER
 
@@ -53,8 +53,8 @@ class Recommender:
         :param interactions_data_path: Path to the CSV file containing interaction data.
         :param config: Configuration object for recommender settings.
         """
-        self.items_df: pd.DataFrame = self.load_data(config.items_data_path)
-        self.interactions_df: pd.DataFrame = self.load_data(
+        self.items_df: pd.DataFrame = self.__load_data(config.items_data_path)
+        self.interactions_df: pd.DataFrame = self.__load_data(
             config.interactions_data_path
         )
         self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
@@ -72,14 +72,39 @@ class Recommender:
         )
         self.available_categories: List[str] = self.extract_available_categories()
         self.reward_interactions: int = config.reward_interactions
-        self.categories_n = config.categories_n
+        self.llm_cats_limit = config.categories_n
         self.use_all_categories = config.use_all_categories
         self.top_k = config.top_k
         self.rec: BanditRecommender = BanditRecommender(
             LearningPolicy.ThompsonSampling(), top_k=config.bandit_top_k
         )
 
-    def load_data(self, filename: str) -> pd.DataFrame:
+        # Set limiter for categories from LLM
+        self.categories_n = config.categories_n
+
+        # DataFrame with columns=["cat2", "count"]
+        self.top_popular_df = (
+            self.interactions_df[self.interactions_df["interaction"] == 1]["items"]
+            .value_counts()
+            .to_frame()
+            .reset_index()
+        )
+
+    def __update_top_popular_df(self):
+        if not (self.interactions_df.empty and self.items_df.empty):
+            self.top_popular_df = (
+                self.interactions_df[self.interactions_df["interaction"] == 1]
+                .join(
+                    self.items_df,
+                    on="item_id",
+                    how="left",
+                )["cat2"]
+                .value_counts()
+                .to_frame()
+                .reset_index()
+            )
+
+    def __load_data(self, filename: str) -> pd.DataFrame:
         """
         Load data from a CSV file into a pandas DataFrame.
 
@@ -238,36 +263,42 @@ class Recommender:
         self,
         user_interactions_df: pd.DataFrame,
         n_top: int,
-    ) -> Tuple[List[str], List[float]]:
+    ) -> pd.DataFrame:
         """
         Method to get a user's top N popular categories.
 
         Args:
-            user_interactions_df (pd.DataFrame): DataFrame containing user interactions.
-                Must have a 'cat2' column.
+            user_interactions_df (pd.DataFrame): DataFrame containing user positive
+                interactions. Must have a 'cat2' column.
             n_top (int): The number of top categories to retrieve.
 
         Returns:
-            Tuple[List[str], List[int]]: A tuple containing two lists:
-              - A list of category names (strings).
-              - A list of corresponding weights (float).
+            pd.DataFrame: pd.DataFrame(columns=["cat2", "weight"])
+              - cat2 --- category names (strings).
+              - weight --- corresponding weights (float).
                     Returns an empty tuple if input is invalid.
         """
+
         if n_top <= 0:
-            return ([], [])
+            return pd.DataFrame(data=[[], []], columns=["cat2", "weight"])
 
         try:
-            user_top = user_interactions_df["cat2"].value_counts().iloc[:n_top]
-            return (
-                user_top.index.values.tolist(),
-                user_top.values.tolist() / user_interactions_df["cat2"].shape[0],
+            user_top = (
+                user_interactions_df["cat2"].value_counts().to_frame().reset_index()
             )
+            user_top.rename(
+                {
+                    "count": "weight",
+                }
+            )
+            user_top["weight"] = user_top["weights"] / user_interactions_df.shape[0]
+            return user_top
         except (
             KeyError,
             AttributeError,
             ZeroDivisionError,
         ):  # Handle cases where 'cat2' column is missing
-            return ([], [])
+            return pd.DataFrame(data=[[], []], columns=["cat2", "weight"])
 
     def get_user_last_liked(
         self,
@@ -287,7 +318,7 @@ class Recommender:
 
         user_positive_interactions = self.__get_user_positive_interactions(user_id)
 
-        user_last_liked = self.__get_user_last_liked_categories(
+        user_last_liked: List[str] = self.__get_user_last_liked_categories(
             user_positive_interactions,
             n_last_liked,
         )
@@ -298,7 +329,7 @@ class Recommender:
         self,
         user_id: int,
         n_top: int,
-    ) -> Tuple[List[str], List[float]]:
+    ) -> pd.DataFrame:
         """
         Method to get user's interaction statistics.
 
@@ -314,14 +345,12 @@ class Recommender:
 
         user_positive_interactions = self.__get_user_positive_interactions(user_id)
 
-        user_top_popular_categories, user_top_popular_counts = (
-            self.__get_user_top_popular_categories(
-                user_positive_interactions,
-                n_top,
-            )
+        user_top_popular = self.__get_user_top_popular_categories(
+            user_positive_interactions,
+            n_top,
         )
 
-        return user_top_popular_categories, user_top_popular_counts
+        return user_top_popular
 
     def get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
         """
@@ -396,13 +425,16 @@ class Recommender:
             LOGGER.info("No interactions data to fit.")
             return
 
-        decisions = self.interactions_df["item_id"].astype(str).tolist()
-        rewards = self.interactions_df["interaction"].tolist()
+        decisions: pd.Series = self.interactions_df["item_id"]
+        rewards: pd.Series = self.interactions_df["interaction"]
 
         self.rec.fit(decisions=decisions, rewards=rewards)
         self.save()
 
         LOGGER.info(f"Fit completed with {len(decisions)} interactions.")
+
+    def __get_users_statistics(self):
+        return self.interactions_df["user_id"].value_counts()
 
     def partial_fit(self, interactions_data_path: str) -> Optional[List[int]]:
         """
@@ -413,49 +445,59 @@ class Recommender:
         :param interactions_data_path: Path to the CSV file containing interaction data.
         :return: None
         """
-        new_interactions_df = self.load_data(interactions_data_path)
+
+        # Load new interactions DataFrame
+        new_interactions_df = self.__load_data(interactions_data_path)
 
         if new_interactions_df.empty:
             LOGGER.info("No new interactions data.")
             return None
 
-        old_users_statistics = self.interactions_df.groupby("user_id").size()
-        new_users_statistics = new_interactions_df.groupby("user_id").size()
-
-        LOGGER.info(f"Reward for old_users_statistics {old_users_statistics}")
-        LOGGER.info(f"Reward for new_users_statistics {new_users_statistics}")
-
-        new_interactions_df["time"] = pd.to_datetime(new_interactions_df["time"])
-
-        if not self.interactions_df.empty and "time" in self.interactions_df.columns:
-            self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
-            latest_time = self.interactions_df["time"].max()
-            new_interactions_df = new_interactions_df[
-                new_interactions_df["time"] > latest_time
-            ]
-
-        if new_interactions_df.empty:
+        # Check if there is new rows in new_interactions_df
+        if new_interactions_df.shape[0] == self.interactions_df.shape[0]:
             LOGGER.info("No new interactions after the latest time.")
             return None
 
-        new_interactions_df["cat2"] = new_interactions_df["item_id"].map(
-            self.items_mapping
-        )
-        self.interactions_df = pd.concat(
-            [self.interactions_df, new_interactions_df], ignore_index=True
-        )
+        # Get statistics from current interactions_df
+        old_users_statistics = self.__get_users_statistics()
+        LOGGER.info(f"Reward for old_users_statistics {old_users_statistics}")
+        old_last_date = self.interactions_df["time"].max()
 
-        decisions_new = new_interactions_df["item_id"].astype(str).tolist()
-        rewards_new = new_interactions_df["interaction"].tolist()
+        # Set new interactions_df
+        self.interactions_df = new_interactions_df
+        gc.collect()
+
+        # Parse column time to datetime format
+        self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
+        # Update global top popular categories
+        self.__update_top_popular_df()
+
+        # Get statistics from new interactions_df
+        new_users_statistics = self.interactions_df["user_id"].value_counts()
+        LOGGER.info(f"Reward for new_users_statistics {new_users_statistics}")
+
+        # Get new records
+        if "time" in self.interactions_df.columns:
+            new_interactions_df = self.interactions_df[
+                self.interactions_df["time"] > old_last_date
+            ]
+
+        # New items with interactions
+        decisions_new: pd.Series = new_interactions_df["item_id"]
+        rewards_new: pd.Series = new_interactions_df["interaction"]
+
         self.rec.partial_fit(decisions_new, rewards_new)
-        self.save()
-
         LOGGER.info(
-            f"Partial fit completed with {len(decisions_new)} new interactions."
+            f"Partial fit completed with {decisions_new.shape[0]} new interactions"
         )
+
+        LOGGER.info("Saving new model...")
+        self.save()
+        LOGGER.info("Model saved!")
 
         reward_users = self.get_reward_users(old_users_statistics, new_users_statistics)
         LOGGER.info(f"Rewarded users: {reward_users}")
+
         return reward_users
 
     def save(self) -> None:
@@ -488,17 +530,67 @@ class Recommender:
 
         # Get prediction for the next categories from LLM
         if use_llm:
-            categories = self.get_llm_selected_cat(user_id, n=self.categories_n)
+            categories = self.get_llm_selected_cat(user_id, n=self.llm_cats_limit)
         else:
-            categories = self.get_random_cat(n=self.categories_n)
+            categories = self.get_random_cat(n=self.llm_cats_limit)
 
         # Number of llm categories for future weights calculation
         num_llm_cats = len(categories)
+        # Get weights for final sampling categories for
+        # bandits
+
+        # Get random samples of user top popular categories
+        user_top_pop: pd.DataFrame = self.get_user_top_popular(
+            user_id=user_id,
+            n_top=self.categories_n * 2,
+        )
+        # initialize sapling weights for user top popular
+        utp_weights = np.ones(self.categories_n)
+
+        if user_top_pop.shape[0] > 0:
+
+            flag_replace = False
+
+            if user_top_pop.shape[0] < self.categories_n:
+                flag_replace = True
+
+            user_top_pop = user_top_pop.sample(self.categories_n, replace=flag_replace)
+
+            # Get sapling weights for user top popular
+            utp_weights = user_top_pop["weight"].values / np.linalg.norm(
+                user_top_pop["weight"].values
+            )
+        else:
+            utp_weights = np.array([])
+
+        # sampling_weights[num_llm_cats : num_llm_cats + self.categories_n]
+        categories.extend(user_top_pop["cat2"].tolist())
+
+        # Get random samples of global top popular categories
+        global_top_pop = self.top_popular_df.iloc[: self.categories_n * 2].sample(
+            self.categories_n
+        )
+        gtp_weights = np.ones(shape=(self.categories_n,)) / self.categories_n
+
+        sampling_weights = np.ones(
+            shape=(num_llm_cats + utp_weights.shape[0] + gtp_weights.shape[0],)
+        )
+        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,))
+        sampling_weights[num_llm_cats : num_llm_cats + utp_weights.shape[0]] = (
+            utp_weights
+        )
+        sampling_weights[-gtp_weights.shape[0] :] = gtp_weights
+        sampling_weights /= np.linalg.norm(sampling_weights)
+        sampling_weights = sampling_weights.tolist()
+
+        categories.extend(global_top_pop["cat2"].tolist())
 
         # Items to recommend
         recommendations = []
 
-        for category in categories:
+        for category in random.choices(
+            categories, sampling_weights, k=self.categories_n
+        ):
 
             # Get Items from predicted categories
             filtered_arms = self.filter_items_by_cats([category])
