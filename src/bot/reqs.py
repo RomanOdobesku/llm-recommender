@@ -16,7 +16,7 @@ USERS_TO_REWARD = defaultdict(int)
 USER_REWARD_FILE = "./data/rewards.txt"
 INTERACTION_DATETIME = datetime.now()
 
-use_easter = os.environ["SET_EASTER"]
+use_easter = os.getenv("SET_EASTER")
 items_eggs = pandas.read_csv("./data/items_easter_eggs.csv", sep=";")
 # item_id;title;price;initprice;discount;rating;reviews;url;img_url;cat1;cat2;cat3
 
