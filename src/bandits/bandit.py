@@ -278,7 +278,7 @@ class Recommender:
         predicted_cats = self.predicted_categories_map.get((user_cat22, user_cat21))
 
         if predicted_cats:
-            selected_cats = random.sample(predicted_cats, n)
+            selected_cats = random.sample(predicted_cats, min(n, len(predicted_cats)))
         else:
             selected_cats = []
 
