@@ -18,24 +18,62 @@ from src.logger import LOGGER
 class RecommenderConfig:
     """
     Configuration class for the Recommender system.
+
+    Attributes:
+        top_k (int): Number of top recommendations to consider.
+        reward_interactions (int): Number of reward interactions to take into account.
+        categories_n (int): Number of categories to use in recommendations.
+        use_all_categories (bool): Whether to use all categories or not.
     """
 
-    def __init__(self, top_k: int, reward_interactions: int, categories_n: int) -> None:
+    def __init__(
+        self,
+        top_k: int,
+        reward_interactions: int,
+        categories_n: int,
+        use_all_categories: bool = False,
+    ) -> None:
+        """
+        Initializes the configuration for the Recommender system.
+
+        Args:
+            top_k (int): Number of top recommendations to consider.
+            reward_interactions (int): Number of reward interactions to take into account.
+            categories_n (int): Number of categories to use in recommendations.
+            use_all_categories (bool, optional): Whether to use all categories or not. Defaults to False.
+        """
         self.top_k = top_k
         self.reward_interactions = reward_interactions
         self.categories_n = categories_n
+        self.use_all_categories = use_all_categories
 
-    def get_top_k(self) -> int:
-        """Return the top_k value."""
-        return self.top_k
+    def __str__(self) -> str:
+        """
+        Provides a user-friendly string representation of the configuration.
 
-    def get_reward_interactions(self) -> int:
-        """Return the reward interactions value."""
-        return self.reward_interactions
+        Returns:
+            str: A concise summary of the configuration.
+        """
+        return (
+            f"RecommenderConfig: {self.top_k} recommendations, "
+            f"{self.reward_interactions} interactions, "
+            f"{self.categories_n} categories, "
+            f"using all categories: {self.use_all_categories}"
+        )
 
-    def get_categories_n(self) -> int:
-        """Return the categories_n value."""
-        return self.categories_n
+    def __repr__(self) -> str:
+        """
+        Provides a detailed and unambiguous string representation of the configuration.
+
+        Returns:
+            str: A full detailed representation for debugging.
+        """
+        return (
+            f"RecommenderConfig(top_k={self.top_k}, "
+            f"reward_interactions={self.reward_interactions}, "
+            f"categories_n={self.categories_n}, "
+            f"use_all_categories={self.use_all_categories})"
+        )
 
 
 class Recommender:
@@ -74,10 +112,11 @@ class Recommender:
             self.extract_hierarchical_categories()
         )
         self.available_categories: List[str] = self.extract_available_categories()
-        self.reward_interactions: int = config.get_reward_interactions()
-        self.categories_n = config.get_categories_n()
+        self.reward_interactions: int = config.reward_interactions
+        self.categories_n = config.categories_n
+        self.use_all_categories = config.use_all_categories
         self.rec: BanditRecommender = BanditRecommender(
-            LearningPolicy.ThompsonSampling(), top_k=config.get_top_k()
+            LearningPolicy.ThompsonSampling(), top_k=config.top_k
         )
 
     def load_data(self, filename: str) -> pd.DataFrame:
@@ -364,8 +403,12 @@ class Recommender:
             categories = self.get_llm_selected_cat(user_id, n=self.categories_n)
         else:
             categories = self.get_random_cat(n=self.categories_n)
-        filtered_items = self.filter_items_by_cats(categories)
-        filtered_arms = filtered_items["item_id"].astype(str).tolist()
+
+        if not self.use_all_categories:
+            filtered_items = self.filter_items_by_cats(categories)
+            filtered_arms = filtered_items["item_id"].tolist()
+        else:
+            filtered_arms = self.items_df["item_id"].tolist()
 
         if not filtered_arms:
             LOGGER.info("No items found for the selected category.")
