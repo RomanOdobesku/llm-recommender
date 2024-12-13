@@ -53,15 +53,24 @@ class Recommender:
         :param interactions_data_path: Path to the CSV file containing interaction data.
         :param config: Configuration object for recommender settings.
         """
+        LOGGER.info("Loading data...")
         self.items_df: pd.DataFrame = self.__load_data(config.items_data_path)
         self.interactions_df: pd.DataFrame = self.__load_data(
             config.interactions_data_path
         )
+        LOGGER.info("All data loaded!")
+
         self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
 
-        self.items_mapping = self.items_df.set_index("item_id")["cat2"]
-        self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
-            self.items_mapping
+        # self.items_mapping = self.items_df.set_index("item_id")["cat2"]
+        # self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
+        #     self.items_mapping
+        # )
+        self.interactions_df = pd.merge(
+            left=self.interactions_df,
+            right=self.items_df[["item_id", "cat2"]],
+            how="left",
+            on="item_id",
         )
 
         self.predicted_categories_map: Dict[tuple, str] = (
@@ -82,23 +91,20 @@ class Recommender:
         # Set limiter for categories from LLM
         self.categories_n = config.categories_n
 
+        LOGGER.info("Get top popular")
         # DataFrame with columns=["cat2", "count"]
-        self.top_popular_df = (
-            self.interactions_df[self.interactions_df["interaction"] == 1]["items"]
-            .value_counts()
-            .to_frame()
-            .reset_index()
-        )
+        if not (self.interactions_df.empty and self.items_df.empty):
+            self.top_popular_df = (
+                self.interactions_df[self.interactions_df["interaction"] == 1]["cat2"]
+                .value_counts()
+                .to_frame()
+                .reset_index()
+            )
 
     def __update_top_popular_df(self):
         if not (self.interactions_df.empty and self.items_df.empty):
             self.top_popular_df = (
-                self.interactions_df[self.interactions_df["interaction"] == 1]
-                .join(
-                    self.items_df,
-                    on="item_id",
-                    how="left",
-                )["cat2"]
+                self.interactions_df[self.interactions_df["interaction"] == 1]["cat2"]
                 .value_counts()
                 .to_frame()
                 .reset_index()
@@ -284,15 +290,18 @@ class Recommender:
 
         try:
             user_top = (
-                user_interactions_df["cat2"].value_counts().to_frame().reset_index()
+                user_interactions_df["cat2"]
+                .value_counts()
+                .to_frame()
+                .reset_index()
+                .rename(
+                    columns={
+                        "count": "weight",
+                    }
+                )
             )
-            user_top.rename(
-                {
-                    "count": "weight",
-                }
-            )
-            user_top["weight"] = user_top["weights"] / user_interactions_df.shape[0]
-            return user_top
+            user_top["weight"] = user_top["weight"] / user_interactions_df.shape[0]
+            return user_top.iloc[:n_top]
         except (
             KeyError,
             AttributeError,
@@ -409,8 +418,8 @@ class Recommender:
         :return: A pandas DataFrame containing filtered items.
         """
         LOGGER.info(f"Filtered by categories: {categories}")
-        filtered_items = self.items_df[
-            self.items_df["cat2"].isin(categories)
+        filtered_items = self.items_df[self.items_df["cat2"].isin(categories)][
+            "item_id"
         ].values.tolist()
 
         return filtered_items
@@ -464,7 +473,12 @@ class Recommender:
         old_last_date = self.interactions_df["time"].max()
 
         # Set new interactions_df
-        self.interactions_df = new_interactions_df
+        self.interactions_df = pd.merge(
+            left=new_interactions_df,
+            right=self.items_df,
+            how="left",
+            on="item_id",
+        )
         gc.collect()
 
         # Parse column time to datetime format
@@ -520,7 +534,9 @@ class Recommender:
         except (OSError, IOError, pickle.PickleError) as e:
             LOGGER.error(f"Failed to save the model: {e}")
 
-    def predict(self, user_id: int, use_llm: bool = False) -> Optional[pd.DataFrame]:
+    def predict(
+        self, user_id: int, use_llm: bool = True, predict_n_items: int = 5
+    ) -> Optional[pd.DataFrame]:
         """
         Make recommendations based on the specified category selection method.
 
@@ -534,10 +550,13 @@ class Recommender:
         else:
             categories = self.get_random_cat(n=self.llm_cats_limit)
 
+        # LOGGER.info(f"{categories}")
         # Number of llm categories for future weights calculation
         num_llm_cats = len(categories)
+        # LOGGER.info(f"{num_llm_cats}")
         # Get weights for final sampling categories for
         # bandits
+        # LOGGER.info(f"{self.interactions_df[self.interactions_df["user_id"] == user_id]}")
 
         # Get random samples of user top popular categories
         user_top_pop: pd.DataFrame = self.get_user_top_popular(
@@ -558,39 +577,70 @@ class Recommender:
 
             # Get sapling weights for user top popular
             utp_weights = user_top_pop["weight"].values / np.linalg.norm(
-                user_top_pop["weight"].values
+                user_top_pop["weight"].values * 0.15
             )
         else:
             utp_weights = np.array([])
 
-        # sampling_weights[num_llm_cats : num_llm_cats + self.categories_n]
-        categories.extend(user_top_pop["cat2"].tolist())
+        # LOGGER.info(f"{user_top_pop}")
+        # LOGGER.info(f"{utp_weights}")
 
         # Get random samples of global top popular categories
         global_top_pop = self.top_popular_df.iloc[: self.categories_n * 2].sample(
             self.categories_n
         )
-        gtp_weights = np.ones(shape=(self.categories_n,)) / self.categories_n
+        gtp_weights = np.ones(shape=(self.categories_n,)) / self.categories_n * 0.2
+        # LOGGER.info(f"{global_top_pop}")
+        # LOGGER.info(f"{gtp_weights}")
+
+        rand_cats = random.choices(
+            self.items_df["cat2"].unique(),
+            k=self.categories_n,
+        )
+        rand_weights = np.ones(shape=(self.categories_n,)) / self.categories_n
 
         sampling_weights = np.ones(
-            shape=(num_llm_cats + utp_weights.shape[0] + gtp_weights.shape[0],)
+            shape=(
+                num_llm_cats
+                + utp_weights.shape[0]
+                + gtp_weights.shape[0]
+                + rand_weights.shape[0],
+            )
         )
-        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,))
+        # LLM weights
+        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,)) * 0.35
+        # UTP weights
         sampling_weights[num_llm_cats : num_llm_cats + utp_weights.shape[0]] = (
-            utp_weights
+            utp_weights * 0.15
         )
-        sampling_weights[-gtp_weights.shape[0] :] = gtp_weights
+        # GTP weights
+        sampling_weights[
+            -gtp_weights.shape[0] - rand_weights.shape[0] : -rand_weights.shape[0]
+        ] = (gtp_weights * 0.25)
+        # RAND weights
+        sampling_weights[-rand_weights.shape[0] :] = rand_weights * 0.25
+
+        # Normalize weights
         sampling_weights /= np.linalg.norm(sampling_weights)
         sampling_weights = sampling_weights.tolist()
 
+        # Add categories
+        categories.extend(user_top_pop["cat2"].tolist())
         categories.extend(global_top_pop["cat2"].tolist())
+        categories.extend(rand_cats)
 
+        # LOGGER.info(f"{categories}")
+        # LOGGER.info(f"{sampling_weights}")
         # Items to recommend
         recommendations = []
 
+        # LOGGER.info(f"{random.choices(categories, sampling_weights, k=self.categories_n)}")
         for category in random.choices(
-            categories, sampling_weights, k=self.categories_n
+            categories,
+            sampling_weights,
+            k=predict_n_items,
         ):
+            # LOGGER.info(f"{category}")
 
             # Get Items from predicted categories
             filtered_arms = self.filter_items_by_cats([category])
@@ -600,21 +650,25 @@ class Recommender:
                 continue
 
             # Set arms for bandit_
+            # LOGGER.info(f"Setting arms for {user_id}")
             self.rec.set_arms(filtered_arms)
-            LOGGER.info(
-                f"Category: {category} Number of arms: {len(self.rec.mab.arms)}"
-            )
+            # LOGGER.info(
+            #     f"UserID: {user_id} Category: {category} Number of arms: {len(self.rec.mab.arms)}"
+            # )
             # Get predictions
-            recommendations.extend(self.rec.recommend())
+            subrec = self.rec.recommend()
+            while subrec[0] in recommendations:
+                subrec = self.rec.recommend()
+            recommendations.extend(subrec)
 
         if not recommendations:
             LOGGER.info("No recommendations generated.")
             return None
 
-        LOGGER.info(f"recommendations: {recommendations}")
-        recommended_ids = [int(item) for item in recommendations]
+        # LOGGER.info(f"recommendations: {recommendations}")
+        # recommended_ids = [int(item) for item in recommendations]
         recommended_items = self.items_df[
-            self.items_df["item_id"].isin(recommended_ids)
+            self.items_df["item_id"].isin(recommendations)
         ]
 
         LOGGER.info(f"Recommended items: {recommended_items.item_id.tolist()}")

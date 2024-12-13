@@ -73,6 +73,7 @@ async def recommend(request: RecommendRequest):
             return {"recommendations": []}
         return {"recommendations": recommendations.to_dict(orient="records")}
     except Exception as error:
+        print(error)
         raise HTTPException(status_code=500, detail=str(error)) from error
 
 

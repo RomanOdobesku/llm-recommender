@@ -19,3 +19,13 @@ if __name__ == "__main__":
         config=config,
     )
     recommender.fit()
+
+    print("\n" * 10)
+
+    print(
+        recommender.predicted_categories_map[
+            ("Фото и видеокамеры", "Компьютеры и периферия")
+        ]
+    )
+    print(recommender.predict(user_id=932768504, use_llm=False))
+    print(recommender.predict(user_id=932768504, use_llm=True))
