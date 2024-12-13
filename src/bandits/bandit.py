@@ -7,75 +7,32 @@ import os
 import pickle
 import random
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from mab2rec import BanditRecommender, LearningPolicy
+from pandas._config import config
 
 from src.logger import LOGGER
 
 
+@dataclass
 class RecommenderConfig:
     """
     Configuration class for the Recommender system.
-
-    Attributes:
-        top_k (int): Number of top recommendations to consider.
-        reward_interactions (int): Number of reward interactions to take into account.
-        categories_n (int): Number of categories to use in recommendations.
-        use_all_categories (bool): Whether to use all categories or not.
     """
 
-    def __init__(
-        self,
-        top_k: int,
-        reward_interactions: int,
-        categories_n: int,
-        bandit_top_k: int,
-        use_all_categories: bool = False,
-    ) -> None:
-        """
-        Initializes the configuration for the Recommender system.
-
-        Args:
-            top_k (int): Number of top recommendations to consider.
-            reward_interactions (int): Number of reward interactions to take into account.
-            categories_n (int): Number of categories to use in recommendations.
-            use_all_categories (bool, optional): Whether to use all categories or not. Defaults to False.
-        """
-        self.top_k = top_k
-        self.reward_interactions = reward_interactions
-        self.categories_n = categories_n
-        self.use_all_categories = use_all_categories
-        self.bandit_top_k = bandit_top_k
-
-    def __str__(self) -> str:
-        """
-        Provides a user-friendly string representation of the configuration.
-
-        Returns:
-            str: A concise summary of the configuration.
-        """
-        return (
-            f"RecommenderConfig: {self.top_k} recommendations, "
-            f"{self.reward_interactions} interactions, "
-            f"{self.categories_n} categories, "
-            f"using all categories: {self.use_all_categories}"
-        )
-
-    def __repr__(self) -> str:
-        """
-        Provides a detailed and unambiguous string representation of the configuration.
-
-        Returns:
-            str: A full detailed representation for debugging.
-        """
-        return (
-            f"RecommenderConfig(top_k={self.top_k}, "
-            f"reward_interactions={self.reward_interactions}, "
-            f"categories_n={self.categories_n}, "
-            f"use_all_categories={self.use_all_categories})"
-        )
+    top_k: int
+    reward_interactions: int
+    items_data_path: str
+    interactions_data_path: str
+    predicted_categories_path: str
+    bandit_top_k: int
+    categories_n: int
+    use_all_categories: bool = False
 
 
 class Recommender:
@@ -86,9 +43,6 @@ class Recommender:
 
     def __init__(
         self,
-        items_data_path: str,
-        interactions_data_path: str,
-        predicted_categories_path: str,
         config: RecommenderConfig,
     ) -> None:
         """
@@ -99,8 +53,11 @@ class Recommender:
         :param interactions_data_path: Path to the CSV file containing interaction data.
         :param config: Configuration object for recommender settings.
         """
-        self.items_df: pd.DataFrame = self.load_data(items_data_path)
-        self.interactions_df: pd.DataFrame = self.load_data(interactions_data_path)
+        self.items_df: pd.DataFrame = self.load_data(config.items_data_path)
+        self.interactions_df: pd.DataFrame = self.load_data(
+            config.interactions_data_path
+        )
+        self.interactions_df["time"] = pd.to_datetime(self.interactions_df["time"])
 
         self.items_mapping = self.items_df.set_index("item_id")["cat2"]
         self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
@@ -108,7 +65,7 @@ class Recommender:
         )
 
         self.predicted_categories_map: Dict[tuple, str] = (
-            self.extract_predicted_categories(predicted_categories_path)
+            self.extract_predicted_categories(config.predicted_categories_path)
         )
         self.hierarchical_categories: Dict[str, Dict[str, List[str]]] = (
             self.extract_hierarchical_categories()
@@ -233,71 +190,189 @@ class Recommender:
             n = min(n, len(self.available_categories))
         return random.sample(self.available_categories, n)
 
-    def get_last_liked_categories(self, user_id: int, n: int = 2) -> List[str]:
+    def __get_user_positive_interactions(self, user_id: int):
         """
-        Retrieve the last `n` liked categories for a given user.
+        Method to get user positive interactions.
+        Returns an empty DataFrame if no positive interactions are found.
 
-        :param user_id: The ID of the user.
-        :param n: Number of last liked categories to retrieve.
-        :return: A list of the last `n` liked categories,
-        supplemented with random categories if needed.
+        Args:
+            user_id (int): user ID
+
+        Returns:
+            (pd.DataFrame): user positive interactions DataFrame,
+            or an empty DataFrame if no interactions are found for the given user_id.
         """
+        # Get users positive interactions
         user_interactions_df = self.interactions_df[
             (self.interactions_df["user_id"] == user_id)
             & (self.interactions_df["interaction"] == 1)
         ]
 
-        LOGGER.info(f"user_interactions_df: {user_interactions_df}")
+        if user_interactions_df.empty:
+            return pd.DataFrame(columns=self.interactions_df.columns)
 
-        user_interactions_df = user_interactions_df.sort_values(
-            by="time", ascending=False
+        return user_interactions_df
+
+    def __get_user_last_liked_categories(
+        self,
+        user_positive_interactions: pd.DataFrame,
+        n_last_liked: int,
+    ):
+
+        user_last_liked = (
+            user_positive_interactions["cat2"].dropna().values[-n_last_liked:].tolist()
         )
-        LOGGER.info(f"user_interactions_df: {user_interactions_df}")
+        if not isinstance(user_last_liked, list):
+            user_last_liked = []
 
-        last_liked_categories = user_interactions_df["cat2"].dropna().tolist()[:n]
+        # LOGGER.info(f"last_liked_categories: {user_last_liked[::-1]}")
 
-        LOGGER.info(f"last_liked_categories: {last_liked_categories[::-1]}")
+        add_n_cats = max(0, n_last_liked - len(user_last_liked))
+        user_last_liked = self.get_random_cat(add_n_cats) + user_last_liked
 
-        if len(last_liked_categories) < n:
-            additional_categories = self.get_random_cat(n - len(last_liked_categories))
-            last_liked_categories.extend(additional_categories)
+        # LOGGER.info(f"Final User's liked categories: {user_last_liked[::-1]}")
 
-        LOGGER.info(f"Final User's liked categories: {last_liked_categories[::-1]}")
-        return last_liked_categories
+        return user_last_liked[-n_last_liked:]
+
+    def __get_user_top_popular_categories(
+        self,
+        user_interactions_df: pd.DataFrame,
+        n_top: int,
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Method to get a user's top N popular categories.
+
+        Args:
+            user_interactions_df (pd.DataFrame): DataFrame containing user interactions.
+                Must have a 'cat2' column.
+            n_top (int): The number of top categories to retrieve.
+
+        Returns:
+            Tuple[List[str], List[int]]: A tuple containing two lists:
+              - A list of category names (strings).
+              - A list of corresponding weights (float).
+                    Returns an empty tuple if input is invalid.
+        """
+        if n_top <= 0:
+            return ([], [])
+
+        try:
+            user_top = user_interactions_df["cat2"].value_counts().iloc[:n_top]
+            return (
+                user_top.index.values.tolist(),
+                user_top.values.tolist() / user_interactions_df["cat2"].shape[0],
+            )
+        except (
+            KeyError,
+            AttributeError,
+            ZeroDivisionError,
+        ):  # Handle cases where 'cat2' column is missing
+            return ([], [])
+
+    def get_user_last_liked(
+        self,
+        user_id: int,
+        n_last_liked: int,
+    ) -> List[str]:
+        """
+        Method to get user's last interactions.
+
+        Args:
+            user_id (int): The ID of the user.
+            n_last_liked (int): The number of last liked categories to retrieve.
+
+        Returns:
+            List[str]: A list of the user's last liked categories.
+        """
+
+        user_positive_interactions = self.__get_user_positive_interactions(user_id)
+
+        user_last_liked = self.__get_user_last_liked_categories(
+            user_positive_interactions,
+            n_last_liked,
+        )
+
+        return user_last_liked
+
+    def get_user_top_popular(
+        self,
+        user_id: int,
+        n_top: int,
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Method to get user's interaction statistics.
+
+        Args:
+            user_id: The ID of the user.
+            n_top: The number of top popular categories to retrieve.
+
+        Returns:
+            Tuple[List[str], List[float]]: A tuple containing two lists:
+                - A list of the user's top N popular categories.
+                - A list of the corresponding weights for those categories.
+        """
+
+        user_positive_interactions = self.__get_user_positive_interactions(user_id)
+
+        user_top_popular_categories, user_top_popular_counts = (
+            self.__get_user_top_popular_categories(
+                user_positive_interactions,
+                n_top,
+            )
+        )
+
+        return user_top_popular_categories, user_top_popular_counts
 
     def get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
         """
         Select `n` categories using an LLM generated predictions.
 
         :param user_id: The ID of the user.
-        :param n: Number of categories to select.
+        :param n: Limitation for number of categories to select.
         :return: A list of selected second-level categories.
         """
-        LOGGER.info(f"Getting last liked categories for: {user_id}")
-        user_cat21, user_cat22 = self.get_last_liked_categories(user_id, n=2)[:2]
-        predicted_cats = self.predicted_categories_map.get((user_cat22, user_cat21))
+
+        LOGGER.info(f"Get statistics for: {user_id}")
+
+        user_last_liked = self.get_user_last_liked(
+            user_id=user_id,
+            n_last_liked=2,
+        )
+        # user_cat21, user_cat22 = self.get_last_liked_categories(user_id, n=2)[:2]
+        predicted_cats = self.predicted_categories_map.get(
+            (user_last_liked[-2], user_last_liked[-1])
+        )
 
         if predicted_cats:
-            selected_cats = random.sample(predicted_cats, min(n, len(predicted_cats)))
+            valid_cats = []
+            for cat in predicted_cats:
+                if cat in self.available_categories:
+                    valid_cats.append(cat)
+                else:
+                    LOGGER.error(
+                        f"Predicted category {cat} not in available categories"
+                    )
+
+            # if len(valid_cats) < n:
+            #     additional_cats = self.get_random_cat(n - len(valid_cats))
+            #     valid_cats.extend(additional_cats)
+
+            # Ограничим количество предсказаний от LLM модели
+            # Важно, чтобы было до n предсказаний
+            valid_cats = random.sample(
+                valid_cats,
+                min(
+                    n,
+                    len(valid_cats),
+                ),
+            )
+            LOGGER.info(f"Valid categories selected by LLM: {valid_cats}")
+
+            return list(set(valid_cats))
         else:
-            selected_cats = []
+            return []
 
-        LOGGER.info(f"Categories selected by LLM: {selected_cats}")
-
-        valid_cats = []
-        for cat in selected_cats:
-            if cat in self.available_categories:
-                valid_cats.append(cat)
-            else:
-                LOGGER.error(f"Predicted category {cat} not in available categories")
-
-        if len(valid_cats) < n:
-            additional_cats = self.get_random_cat(n - len(valid_cats))
-            valid_cats.extend(additional_cats)
-
-        return list(set(valid_cats))
-
-    def filter_items_by_cats(self, categories: List[str]) -> pd.DataFrame:
+    def filter_items_by_cats(self, categories: List[str]) -> npt.ArrayLike:
         """
         Filter items by a list of second-level categories.
 
@@ -305,8 +380,11 @@ class Recommender:
         :return: A pandas DataFrame containing filtered items.
         """
         LOGGER.info(f"Filtered by categories: {categories}")
-        filtered_df = self.items_df[self.items_df["cat2"].isin(categories)]
-        return filtered_df
+        filtered_items = self.items_df[
+            self.items_df["cat2"].isin(categories)
+        ].values.tolist()
+
+        return filtered_items
 
     def fit(self) -> None:
         """
@@ -407,47 +485,40 @@ class Recommender:
         :param use_llm: Whether to use an LLM for category selection.
         :return: List of recommended items, or None if no items found.
         """
+
+        # Get prediction for the next categories from LLM
         if use_llm:
             categories = self.get_llm_selected_cat(user_id, n=self.categories_n)
         else:
             categories = self.get_random_cat(n=self.categories_n)
 
-        # if not self.use_all_categories:
-        #     filtered_items = self.filter_items_by_cats(categories)
-        #     filtered_arms = filtered_items["item_id"].tolist()
-        # else:
-        #     filtered_arms = self.items_df["item_id"].tolist()
+        # Number of llm categories for future weights calculation
+        num_llm_cats = len(categories)
 
+        # Items to recommend
         recommendations = []
+
         for category in categories:
-            filtered_items = self.filter_items_by_cats([category])
-            filtered_arms = filtered_items["item_id"].tolist()
+
+            # Get Items from predicted categories
+            filtered_arms = self.filter_items_by_cats([category])
+
             if not filtered_arms:
                 LOGGER.info("No items found for the selected category.")
                 continue
+
+            # Set arms for bandit_
             self.rec.set_arms(filtered_arms)
             LOGGER.info(
                 f"Category: {category} Number of arms: {len(self.rec.mab.arms)}"
             )
+            # Get predictions
             recommendations.extend(self.rec.recommend())
-
-        if self.top_k > self.categories_n:
-            categories = self.get_random_cat(n=(self.top_k - self.categories_n))
-            for category in categories:
-                filtered_items = self.filter_items_by_cats([category])
-                filtered_arms = filtered_items["item_id"].tolist()
-                if not filtered_arms:
-                    LOGGER.info("No items found for the selected category.")
-                    continue
-                self.rec.set_arms(filtered_arms)
-                LOGGER.info(
-                    f"Category: {category} Number of arms: {len(self.rec.mab.arms)}"
-                )
-                recommendations.extend(self.rec.recommend())
 
         if not recommendations:
             LOGGER.info("No recommendations generated.")
             return None
+
         LOGGER.info(f"recommendations: {recommendations}")
         recommended_ids = [int(item) for item in recommendations]
         recommended_items = self.items_df[
