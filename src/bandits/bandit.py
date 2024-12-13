@@ -52,10 +52,6 @@ class Recommender:
             config.interactions_data_path
         )
 
-        # items_mapping = self.items_df.set_index("item_id")["cat2"]
-        # self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
-        #     items_mapping
-        # )
         self.interactions_df = self.interactions_df.merge(
             self.items_df[["item_id", "cat2"]], on="item_id", how="left"
         )
@@ -166,23 +162,6 @@ class Recommender:
         except KeyError as e:
             LOGGER.error(f"Error: Missing column(s) in items_df: {e}")
             return {}
-        # except Exception as e:
-        #     LOGGER.exception(f"An unexpected error occurred: {e}")
-        #     return {}
-
-        # hierarchical_categories: Dict[str, Dict[str, List[str]]] = {}
-        # for _, row in self.items_df.iterrows():
-        #     cat1, cat2, cat3 = row["cat1"], row["cat2"], row["cat3"]
-        #     hierarchical_categories.setdefault(cat1, {}).setdefault(cat2, []).append(
-        #         cat3
-        #     )
-        #
-        # for cat1, cat2_dict in hierarchical_categories.items():
-        #     for cat2 in cat2_dict:
-        #         cat2_dict[cat2] = list(set(cat2_dict[cat2]))
-        #
-        # LOGGER.info(hierarchical_categories)
-        # return hierarchical_categories
 
     def extract_available_categories(self) -> List[str]:
         """
@@ -320,7 +299,11 @@ class Recommender:
             return None
 
         self.interactions_df = pd.concat(
-            [self.interactions_df, new_interactions_df], ignore_index=True
+            [
+                self.interactions_df,
+                new_interactions_df,
+            ],
+            ignore_index=True,
         )
         decisions_new = new_interactions_df["item_id"].astype(str).tolist()
         rewards_new = new_interactions_df["interaction"].tolist()
