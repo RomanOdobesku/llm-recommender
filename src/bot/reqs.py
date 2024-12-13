@@ -1,6 +1,7 @@
 """ file to send requests to bandits """
 
 import os
+import pandas
 import random
 from collections import defaultdict
 from datetime import datetime
@@ -14,6 +15,10 @@ USER_RECOMMEND = defaultdict(list)
 USERS_TO_REWARD = defaultdict(int)
 USER_REWARD_FILE = "./data/rewards.txt"
 INTERACTION_DATETIME = datetime.now()
+
+use_easter = os.environ["SET_EASTER"]
+items_eggs = pandas.read_csv("./data/items_easter_eggs.csv", sep=";")
+# item_id;title;price;initprice;discount;rating;reviews;url;img_url;cat1;cat2;cat3
 
 class ItemInfo:
     """ ItemInfo to keep info """
@@ -42,8 +47,8 @@ class Item:
         """ save image locally by image link """
 
     def __repr__(self):
-        return f"Item(name={self.item_id}, item_id={self.image_link}, "\
-                f"link={self.info.category}, cat1={self.info.description})"
+        return f"Item(name={self.info.category}, item_id={self.item_id}, "\
+                f"link={self.link}, cat1={self.info.description})"
 
 
 def escape_description(text: str):
@@ -67,7 +72,16 @@ def get_product_for_user(user_id: str) -> Item:
     :param user_id: user_id get id of user to get a recommendations
     :return recommendation for a user
     """
-    global USER_RECOMMEND, INTERACTION_DATETIME, USER_REWARD_FILE, USERS_TO_REWARD
+    global USER_RECOMMEND, INTERACTION_DATETIME, USER_REWARD_FILE, USERS_TO_REWARD, items_eggs
+    if use_easter == "on" and random.random() < 0.1:
+        vals = items_eggs.sample(n=1).values
+        item_id = vals[0][0]
+        img_url = vals[0][8]
+        url = vals[0][7]
+        cat2 = vals[0][10]
+        title = vals[0][1]
+        price = vals[0][2]
+        return Item(item_id, img_url, url, ItemInfo(cat2, title, price))
     if len(USER_RECOMMEND[user_id]) != 0:
         item = USER_RECOMMEND[user_id][0]
         USER_RECOMMEND[user_id] = USER_RECOMMEND[user_id][1:]
@@ -81,6 +95,7 @@ def get_product_for_user(user_id: str) -> Item:
             for user in users:
                 USERS_TO_REWARD[user] += 1
                 f2.writelines([f"{user_id} 0\n"])
+
     LOGGER.info(f"get a product for user {user_id}")
 
     url = f"http://localhost:{port}/recommend/"
