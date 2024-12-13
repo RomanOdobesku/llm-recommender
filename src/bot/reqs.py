@@ -3,6 +3,7 @@
 import os
 import random
 from collections import defaultdict
+from datetime import datetime
 
 import requests
 from src.logger import LOGGER  # pylint: disable=import-error
@@ -10,7 +11,9 @@ from src.logger import LOGGER  # pylint: disable=import-error
 port = int(os.environ["FAST_API_PORT"])
 session = requests.Session()
 USER_RECOMMEND = defaultdict(list)
-
+USERS_TO_REWARD = defaultdict(int)
+USER_REWARD_FILE = "./data/rewards.txt"
+INTERACTION_DATETIME = datetime.now()
 
 class ItemInfo:
     """ ItemInfo to keep info """
@@ -64,12 +67,20 @@ def get_product_for_user(user_id: str) -> Item:
     :param user_id: user_id get id of user to get a recommendations
     :return recommendation for a user
     """
-    global USER_RECOMMEND
+    global USER_RECOMMEND, INTERACTION_DATETIME, USER_REWARD_FILE, USERS_TO_REWARD
     if len(USER_RECOMMEND[user_id]) != 0:
         item = USER_RECOMMEND[user_id][0]
         USER_RECOMMEND[user_id] = USER_RECOMMEND[user_id][1:]
         return item
 
+    time = datetime.now()
+    if (time - INTERACTION_DATETIME).total_seconds() > 15:
+        INTERACTION_DATETIME = time
+        users = update_interactions(os.path.abspath("./data/interactions.csv"))
+        with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f2:
+            for user in users:
+                USERS_TO_REWARD[user] += 1
+                f2.writelines([f"{user_id} 0\n"])
     LOGGER.info(f"get a product for user {user_id}")
 
     url = f"http://localhost:{port}/recommend/"

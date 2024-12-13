@@ -10,11 +10,10 @@ import telebot
 from telebot import types
 from src.logger import LOGGER  # pylint: disable=import-error
 from .reqs import (Item, get_product_for_user,  # pylint: disable=relative-beyond-top-level
-                   update_interactions,  # pylint: disable=relative-beyond-top-level
-                   escape_description)  # pylint: disable=relative-beyond-top-level
+                   escape_description,
+                   USER_REWARD_FILE,
+                   USERS_TO_REWARD)  # pylint: disable=relative-beyond-top-level
 
-USERS_TO_REWARD = defaultdict(int)
-USER_REWARD_FILE = "./data/rewards.txt"
 
 with open(USER_REWARD_FILE, "a", encoding="utf-8") as f1:
     pass
@@ -33,7 +32,6 @@ with open(USER_REWARD_FILE, 'r+', encoding="utf-8") as f1:
             if USERS_TO_REWARD[uid] <= 0:
                 USERS_TO_REWARD.pop(uid)
 
-INTERACTION_DATETIME = datetime.now()
 token = os.environ["TELEGRAM_BOT_TOKEN"]
 bot = telebot.TeleBot(token, threaded=False)
 
@@ -45,7 +43,7 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     :param chat_id: chat id to send recommendation
     :param recommendation: recommendation to send
     """
-    global INTERACTION_DATETIME  # pylint: disable=global-statement
+    global USERS_TO_REWARD  # pylint: disable=global-statement
 
     LOGGER.info(f"send product {recommendation} for chat {chat_id}")
     markup_inline = types.InlineKeyboardMarkup()
@@ -61,14 +59,6 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
     LOGGER.info(f"photo_caption: {photo_caption}")
     bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
                    reply_markup=markup_inline, parse_mode="MarkdownV2")
-    time = datetime.now()
-    if (time - INTERACTION_DATETIME).total_seconds() > 30:
-        INTERACTION_DATETIME = time
-        users = update_interactions(os.path.abspath("./data/interactions.csv"))
-        with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f2:
-            for user in users:
-                USERS_TO_REWARD[user] += 1
-                f2.writelines([f"{user_id} 0\n"])
     if user_id in USERS_TO_REWARD.keys():
         hsh = secrets.token_hex(nbytes=16)[:15]
         bot.send_message(chat_id,
