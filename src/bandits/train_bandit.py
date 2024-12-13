@@ -6,7 +6,11 @@ from src.bandits.bandit import Recommender, RecommenderConfig
 
 if __name__ == "__main__":
     config = RecommenderConfig(
-        top_k=3, reward_interactions=30, categories_n=3, use_all_categories=False
+        top_k=5,
+        reward_interactions=30,
+        categories_n=3,
+        bandit_top_k=1,
+        use_all_categories=False,
     )
     recommender = Recommender(
         items_data_path="./data/items.csv",
@@ -15,4 +19,3 @@ if __name__ == "__main__":
         config=config,
     )
     recommender.fit()
-    

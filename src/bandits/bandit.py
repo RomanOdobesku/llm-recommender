@@ -31,6 +31,7 @@ class RecommenderConfig:
         top_k: int,
         reward_interactions: int,
         categories_n: int,
+        bandit_top_k: int,
         use_all_categories: bool = False,
     ) -> None:
         """
@@ -46,6 +47,7 @@ class RecommenderConfig:
         self.reward_interactions = reward_interactions
         self.categories_n = categories_n
         self.use_all_categories = use_all_categories
+        self.bandit_top_k = bandit_top_k
 
     def __str__(self) -> str:
         """
@@ -115,8 +117,9 @@ class Recommender:
         self.reward_interactions: int = config.reward_interactions
         self.categories_n = config.categories_n
         self.use_all_categories = config.use_all_categories
+        self.top_k = config.top_k
         self.rec: BanditRecommender = BanditRecommender(
-            LearningPolicy.ThompsonSampling(), top_k=config.top_k
+            LearningPolicy.ThompsonSampling(), top_k=config.bandit_top_k
         )
 
     def load_data(self, filename: str) -> pd.DataFrame:
@@ -251,17 +254,15 @@ class Recommender:
         )
         LOGGER.info(f"user_interactions_df: {user_interactions_df}")
 
-        last_liked_categories = (
-            user_interactions_df["cat2"].dropna().tolist()[:n]
-        )
+        last_liked_categories = user_interactions_df["cat2"].dropna().tolist()[:n]
 
-        LOGGER.info(f"last_liked_categories: {last_liked_categories}")
+        LOGGER.info(f"last_liked_categories: {last_liked_categories[::-1]}")
 
         if len(last_liked_categories) < n:
             additional_categories = self.get_random_cat(n - len(last_liked_categories))
             last_liked_categories.extend(additional_categories)
 
-        LOGGER.info(f"Final User's liked categories: {last_liked_categories}")
+        LOGGER.info(f"Final User's liked categories: {last_liked_categories[::-1]}")
         return last_liked_categories
 
     def get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
@@ -277,7 +278,7 @@ class Recommender:
         predicted_cats = self.predicted_categories_map.get((user_cat22, user_cat21))
 
         if predicted_cats:
-            selected_cats = predicted_cats[:n]
+            selected_cats = random.sample(predicted_cats, n)
         else:
             selected_cats = []
 
@@ -365,7 +366,7 @@ class Recommender:
         self.interactions_df = pd.concat(
             [self.interactions_df, new_interactions_df], ignore_index=True
         )
-        
+
         decisions_new = new_interactions_df["item_id"].astype(str).tolist()
         rewards_new = new_interactions_df["interaction"].tolist()
         self.rec.partial_fit(decisions_new, rewards_new)
@@ -411,24 +412,43 @@ class Recommender:
         else:
             categories = self.get_random_cat(n=self.categories_n)
 
-        if not self.use_all_categories:
-            filtered_items = self.filter_items_by_cats(categories)
+        # if not self.use_all_categories:
+        #     filtered_items = self.filter_items_by_cats(categories)
+        #     filtered_arms = filtered_items["item_id"].tolist()
+        # else:
+        #     filtered_arms = self.items_df["item_id"].tolist()
+
+        recommendations = []
+        for category in categories:
+            filtered_items = self.filter_items_by_cats([category])
             filtered_arms = filtered_items["item_id"].tolist()
-        else:
-            filtered_arms = self.items_df["item_id"].tolist()
+            if not filtered_arms:
+                LOGGER.info("No items found for the selected category.")
+                continue
+            self.rec.set_arms(filtered_arms)
+            LOGGER.info(
+                f"Category: {category} Number of arms: {len(self.rec.mab.arms)}"
+            )
+            recommendations.extend(self.rec.recommend())
 
-        if not filtered_arms:
-            LOGGER.info("No items found for the selected category.")
-            return None
-
-        self.rec.set_arms(filtered_arms)
-        LOGGER.info(f"Number of arms: {len(self.rec.mab.arms)}")
-        recommendations = self.rec.recommend()
+        if self.top_k > self.categories_n:
+            categories = self.get_random_cat(n=(self.top_k - self.categories_n))
+            for category in categories:
+                filtered_items = self.filter_items_by_cats([category])
+                filtered_arms = filtered_items["item_id"].tolist()
+                if not filtered_arms:
+                    LOGGER.info("No items found for the selected category.")
+                    continue
+                self.rec.set_arms(filtered_arms)
+                LOGGER.info(
+                    f"Category: {category} Number of arms: {len(self.rec.mab.arms)}"
+                )
+                recommendations.extend(self.rec.recommend())
 
         if not recommendations:
             LOGGER.info("No recommendations generated.")
             return None
-
+        LOGGER.info(f"recommendations: {recommendations}")
         recommended_ids = [int(item) for item in recommendations]
         recommended_items = self.items_df[
             self.items_df["item_id"].isin(recommended_ids)
