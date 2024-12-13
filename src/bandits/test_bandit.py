@@ -8,7 +8,7 @@ BASE_URL = "http://127.0.0.1:8000"
 def test_recommend():
     """Test the recommend endpoint with a sample user input."""
     response = requests.post(
-        f"{BASE_URL}/recommend/", json={"user_id": 873462379, "use_llm": True}
+        f"{BASE_URL}/recommend/", json={"user_id": 87346237431, "use_llm": True}
     )
     print("Recommend Response:", response.json())
     assert response.status_code == 200, "Failed to get recommendations"
