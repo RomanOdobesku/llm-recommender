@@ -8,28 +8,25 @@ import random
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from dataclasses import dataclass
+
 import pandas as pd
 from mab2rec import BanditRecommender, LearningPolicy
 
 from src.logger import LOGGER
 
 
+@dataclass
 class RecommenderConfig:
     """
     Configuration class for the Recommender system.
     """
 
-    def __init__(self, top_k: int, reward_interactions: int) -> None:
-        self.top_k = top_k
-        self.reward_interactions = reward_interactions
-
-    def get_top_k(self) -> int:
-        """Return the top_k value."""
-        return self.top_k
-
-    def get_reward_interactions(self) -> int:
-        """Return the reward interactions value."""
-        return self.reward_interactions
+    top_k: int
+    reward_interactions: int
+    items_data_path: str
+    interactions_data_path: str
+    predicted_categories_path: str
 
 
 class Recommender:
@@ -40,9 +37,6 @@ class Recommender:
 
     def __init__(
         self,
-        items_data_path: str,
-        interactions_data_path: str,
-        predicted_categories_path: str,
         config: RecommenderConfig,
     ) -> None:
         """
@@ -53,24 +47,31 @@ class Recommender:
         :param interactions_data_path: Path to the CSV file containing interaction data.
         :param config: Configuration object for recommender settings.
         """
-        self.items_df: pd.DataFrame = self.load_data(items_data_path)
-        self.interactions_df: pd.DataFrame = self.load_data(interactions_data_path)
+        self.items_df: pd.DataFrame = self.load_data(config.items_data_path)
+        self.interactions_df: pd.DataFrame = self.load_data(
+            config.interactions_data_path
+        )
 
-        items_mapping = self.items_df.set_index("item_id")["cat2"]
-        self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
-            items_mapping
+        # items_mapping = self.items_df.set_index("item_id")["cat2"]
+        # self.interactions_df["cat2"] = self.interactions_df["item_id"].map(
+        #     items_mapping
+        # )
+        self.interactions_df = self.interactions_df.merge(
+            self.items_df[["item_id", "cat2"]], on="item_id", how="left"
         )
 
         self.predicted_categories_map: Dict[tuple, str] = (
-            self.extract_predicted_categories(predicted_categories_path)
+            self.extract_predicted_categories(config.predicted_categories_path)
         )
         self.hierarchical_categories: Dict[str, Dict[str, List[str]]] = (
             self.extract_hierarchical_categories()
         )
         self.available_categories: List[str] = self.extract_available_categories()
-        self.reward_interactions: int = config.get_reward_interactions()
+        self.reward_interactions: int = (
+            config.reward_interactions
+        )  # get_reward_interactions()
         self.rec: BanditRecommender = BanditRecommender(
-            LearningPolicy.ThompsonSampling(), top_k=config.get_top_k()
+            LearningPolicy.ThompsonSampling(), top_k=config.top_k  # get_top_k()
         )
 
     def load_data(self, filename: str) -> pd.DataFrame:
@@ -90,30 +91,38 @@ class Recommender:
             return pd.DataFrame()
 
     def get_reward_users(
-        self, old_users_statistics: pd.Series, new_users_statistics: pd.Series
+        self,
+        old_users_statistics: pd.Series,
+        new_users_statistics: pd.Series,
     ) -> List[int]:
         """
         Compare old and new user statistics to find users whose interaction counts have changed,
         considering a normalization factor of self.reward_interactions.
 
-        :return: A list of users who will get reward.
+        :return: A list of user IDs who will get a reward.
         """
-        old_stats_df = old_users_statistics.rename("old_count").reset_index()
-        new_stats_df = new_users_statistics.rename("new_count").reset_index()
-        comparison_df = pd.merge(old_stats_df, new_stats_df, on="user_id", how="outer")
-        comparison_df.fillna(0, inplace=True)
-        comparison_df["old_count"] = comparison_df["old_count"].astype(int)
-        comparison_df["new_count"] = comparison_df["new_count"].astype(int)
-        comparison_df["old_normalized"] = (
-            comparison_df["old_count"] // self.reward_interactions
+
+        # Efficiently merge and handle NaN values
+        # (avoids creating unnecessary intermediate DataFrames)
+        merged_df = (
+            pd.merge(
+                old_users_statistics.rename("old_count").reset_index(),
+                new_users_statistics.rename("new_count").reset_index(),
+                on="user_id",
+                how="outer",
+            )
+            .fillna(0)
+            .astype(int)
         )
-        comparison_df["new_normalized"] = (
-            comparison_df["new_count"] // self.reward_interactions
-        )
-        changed_users = comparison_df[
-            comparison_df["new_normalized"] > comparison_df["old_normalized"]
-        ]
-        return changed_users["user_id"].tolist()
+
+        # Directly calculate normalized counts and identify changed users (more efficient)
+        merged_df["old_normalized"] = merged_df["old_count"] // self.reward_interactions
+        merged_df["new_normalized"] = merged_df["new_count"] // self.reward_interactions
+        reward_users = merged_df.loc[
+            merged_df["new_normalized"] > merged_df["old_normalized"], "user_id"
+        ].tolist()
+
+        return reward_users
 
     def extract_predicted_categories(
         self, predicted_categories_path: str
@@ -124,12 +133,9 @@ class Recommender:
         :return: A dictionary representing the mapping of 2 user's categories to predicted one.
         """
         df = self.load_data(predicted_categories_path)
-
-        predicted_categories_map = {
-            (row["user_category_1"], row["user_category_2"]): row["predicted_category"]
-            for _, row in df.iterrows()
-        }
-        return predicted_categories_map
+        return df.set_index(["user_category_1", "user_category_2"])[
+            "predicted_category"
+        ].to_dict()
 
     def extract_hierarchical_categories(self) -> Dict[str, Dict[str, List[str]]]:
         """
@@ -138,19 +144,45 @@ class Recommender:
         :return: A dictionary representing the hierarchical category structure.
         """
 
-        hierarchical_categories: Dict[str, Dict[str, List[str]]] = {}
-        for _, row in self.items_df.iterrows():
-            cat1, cat2, cat3 = row["cat1"], row["cat2"], row["cat3"]
-            hierarchical_categories.setdefault(cat1, {}).setdefault(cat2, []).append(
-                cat3
-            )
+        try:
+            hierarchical_categories = {}
+            # Use .groupby for significantly better performance
+            for cat1, group in self.items_df.groupby("cat1"):
+                cat2_dict = {}
+                for _, row in group.iterrows():
+                    cat2 = row["cat2"]
+                    cat3 = row["cat3"]
+                    cat2_dict.setdefault(cat2, []).append(cat3)  # Efficiently appends
 
-        for cat1, cat2_dict in hierarchical_categories.items():
-            for cat2 in cat2_dict:
-                cat2_dict[cat2] = list(set(cat2_dict[cat2]))
+                for cat2, cat3_list in cat2_dict.items():
+                    cat2_dict[cat2] = sorted(
+                        list(set(cat3_list))
+                    )  # Sort for consistency
+                hierarchical_categories[cat1] = cat2_dict
 
-        LOGGER.info(hierarchical_categories)
-        return hierarchical_categories
+            LOGGER.info(hierarchical_categories)
+            return hierarchical_categories
+
+        except KeyError as e:
+            LOGGER.error(f"Error: Missing column(s) in items_df: {e}")
+            return {}
+        # except Exception as e:
+        #     LOGGER.exception(f"An unexpected error occurred: {e}")
+        #     return {}
+
+        # hierarchical_categories: Dict[str, Dict[str, List[str]]] = {}
+        # for _, row in self.items_df.iterrows():
+        #     cat1, cat2, cat3 = row["cat1"], row["cat2"], row["cat3"]
+        #     hierarchical_categories.setdefault(cat1, {}).setdefault(cat2, []).append(
+        #         cat3
+        #     )
+        #
+        # for cat1, cat2_dict in hierarchical_categories.items():
+        #     for cat2 in cat2_dict:
+        #         cat2_dict[cat2] = list(set(cat2_dict[cat2]))
+        #
+        # LOGGER.info(hierarchical_categories)
+        # return hierarchical_categories
 
     def extract_available_categories(self) -> List[str]:
         """
@@ -159,11 +191,13 @@ class Recommender:
 
         :return: A list of second-level categories available in the hierarchical structure.
         """
-        available_categories: List[str] = [
-            cat2
-            for _, cat2_dict in self.hierarchical_categories.items()
-            for cat2 in cat2_dict
-        ]
+        available_categories = list(
+            {
+                cat2
+                for cat2_dict in self.hierarchical_categories.values()
+                for cat2 in cat2_dict
+            }
+        )
         return available_categories
 
     def get_random_cat(self, n: int = 1) -> List[str]:
@@ -173,13 +207,16 @@ class Recommender:
         :param n: Number of categories to select.
         :return: A list of randomly selected second-level categories.
         """
+        if n <= 0:
+            return []
         if n > len(self.available_categories):
             LOGGER.error(
                 f"Requested number of categories (n={n}) exceeds \
                 available categories ({len(self.available_categories)}). \
                 Adjusting to available maximum."
             )
-            n = min(n, len(self.available_categories))
+            return self.available_categories
+
         return random.sample(self.available_categories, n)
 
     def get_last_liked_categories(self, user_id: int, n: int = 2) -> List[str]:
@@ -194,17 +231,16 @@ class Recommender:
         user_interactions_df = self.interactions_df[
             (self.interactions_df["user_id"] == user_id)
             & (self.interactions_df["interaction"] == 1)
-        ]
+        ].sort_values(by=["time"], ascending=False)
 
-        user_interactions_df = user_interactions_df.sort_values(
-            by="time", ascending=False
+        # md need unique
+        last_liked_categories = (
+            user_interactions_df["cat2"].dropna().unique()[:n].tolist()
         )
 
-        last_liked_categories = user_interactions_df["cat2"].dropna().head(n).tolist()
-
-        if len(last_liked_categories) < n:
-            additional_categories = self.get_random_cat(n - len(last_liked_categories))
-            last_liked_categories.extend(additional_categories)
+        num_additional = max(0, n - len(last_liked_categories))
+        additional_categories = self.get_random_cat(num_additional)
+        last_liked_categories.extend(additional_categories)
 
         return last_liked_categories
 
