@@ -6,7 +6,7 @@ import json
 import os
 import pickle
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import gc
@@ -99,6 +99,16 @@ class Recommender:
                 .value_counts()
                 .to_frame()
                 .reset_index()
+            ).rename(
+                columns={
+                    "count": "weight",
+                }
+            )
+            self.top_popular_df["weight"] = (
+                self.top_popular_df["weight"]
+                / self.interactions_df[self.interactions_df["interaction"] == 1].shape[
+                    0
+                ]
             )
 
     def __update_top_popular_df(self):
@@ -108,6 +118,16 @@ class Recommender:
                 .value_counts()
                 .to_frame()
                 .reset_index()
+            ).rename(
+                columns={
+                    "count": "weight",
+                }
+            )
+            self.top_popular_df["weight"] = (
+                self.top_popular_df["weight"]
+                / self.interactions_df[self.interactions_df["interaction"] == 1].shape[
+                    0
+                ]
             )
 
     def __load_data(self, filename: str) -> pd.DataFrame:
@@ -221,49 +241,66 @@ class Recommender:
             n = min(n, len(self.available_categories))
         return random.sample(self.available_categories, n)
 
-    def __get_user_positive_interactions(self, user_id: int):
+    def __get_user_interactions(
+        self,
+        user_id: int,
+        positive: Optional[int] = None,
+        timedelta: Optional[pd.Timedelta] = None,
+    ):
         """
         Method to get user positive interactions.
         Returns an empty DataFrame if no positive interactions are found.
 
         Args:
             user_id (int): user ID
-
+            positive (Optional[int]): Get all interactions (by default = None)
+                or only positive (positive = 1) or only negative (positive = 0)
+                interactions
+            timedelta (Optional[pd.Timedelta]): get interactions
+                for the last `timedelta` time
         Returns:
             (pd.DataFrame): user positive interactions DataFrame,
             or an empty DataFrame if no interactions are found for the given user_id.
         """
-        # Get users positive interactions
+
         user_interactions_df = self.interactions_df[
             (self.interactions_df["user_id"] == user_id)
-            & (self.interactions_df["interaction"] == 1)
         ]
 
         if user_interactions_df.empty:
             return pd.DataFrame(columns=self.interactions_df.columns)
 
+        if positive is not None:
+            user_interactions_df = user_interactions_df[
+                (user_interactions_df["interaction"] == positive)
+            ]
+
+        if timedelta is not None:
+            max_user_date = user_interactions_df["time"].max()
+            user_interactions_df = user_interactions_df[
+                (user_interactions_df["time"] > max_user_date - timedelta)
+            ]
+
         return user_interactions_df
 
-    def __get_user_last_liked_categories(
+    def __get_user_last_n_categories(
         self,
-        user_positive_interactions: pd.DataFrame,
-        n_last_liked: int,
+        user_interactions: pd.DataFrame,
+        n_last: int,
     ):
 
-        user_last_liked = (
-            user_positive_interactions["cat2"].dropna().values[-n_last_liked:].tolist()
-        )
-        if not isinstance(user_last_liked, list):
-            user_last_liked = []
+        user_last = user_interactions["cat2"].dropna().values[-n_last:].tolist()
+        if not isinstance(user_last, list):
+            user_last = []
 
         # LOGGER.info(f"last_liked_categories: {user_last_liked[::-1]}")
 
-        add_n_cats = max(0, n_last_liked - len(user_last_liked))
-        user_last_liked = self.get_random_cat(add_n_cats) + user_last_liked
+        add_n_cats = max(0, n_last - len(user_last))
+        user_last = self.get_random_cat(add_n_cats) + user_last
 
         # LOGGER.info(f"Final User's liked categories: {user_last_liked[::-1]}")
 
-        return user_last_liked[-n_last_liked:]
+        return user_last[-n_last:]
 
     def __get_user_top_popular_categories(
         self,
@@ -277,7 +314,6 @@ class Recommender:
             user_interactions_df (pd.DataFrame): DataFrame containing user positive
                 interactions. Must have a 'cat2' column.
             n_top (int): The number of top categories to retrieve.
-
         Returns:
             pd.DataFrame: pd.DataFrame(columns=["cat2", "weight"])
               - cat2 --- category names (strings).
@@ -313,6 +349,7 @@ class Recommender:
         self,
         user_id: int,
         n_last_liked: int,
+        timedelta: Optional[pd.Timedelta] = None,
     ) -> List[str]:
         """
         Method to get user's last interactions.
@@ -320,19 +357,57 @@ class Recommender:
         Args:
             user_id (int): The ID of the user.
             n_last_liked (int): The number of last liked categories to retrieve.
+            timedelta (optional[pd.timedelta]): get interactions
+                for the last `timedelta` time
 
         Returns:
             List[str]: A list of the user's last liked categories.
         """
 
-        user_positive_interactions = self.__get_user_positive_interactions(user_id)
+        user_positive_interactions = self.__get_user_interactions(
+            user_id,
+            1,
+            timedelta,
+        )
 
-        user_last_liked: List[str] = self.__get_user_last_liked_categories(
+        user_last_liked: pd.DataFrame = self.__get_user_last_n_categories(
             user_positive_interactions,
             n_last_liked,
         )
 
         return user_last_liked
+
+    def get_user_last_disliked(
+        self,
+        user_id: int,
+        n_last_disliked: int,
+        timedelta: Optional[pd.Timedelta] = None,
+    ) -> List[str]:
+        """
+        Method to get user's last interactions.
+
+        Args:
+            user_id (int): The ID of the user.
+            n_last_disliked (int): The number of last disliked categories to retrieve.
+            timedelta (optional[pd.timedelta]): get interactions
+                for the last `timedelta` time
+
+        Returns:
+            List[str]: A list of the user's last disliked categories.
+        """
+
+        user_negative_interactions = self.__get_user_interactions(
+            user_id,
+            0,
+            timedelta,
+        )
+
+        user_last_disliked: pd.DataFrame = self.__get_user_last_n_categories(
+            user_negative_interactions,
+            n_last_disliked,
+        )
+
+        return user_last_disliked
 
     def get_user_top_popular(
         self,
@@ -352,7 +427,7 @@ class Recommender:
                 - A list of the corresponding weights for those categories.
         """
 
-        user_positive_interactions = self.__get_user_positive_interactions(user_id)
+        user_positive_interactions = self.__get_user_interactions(user_id, positive=1)
 
         user_top_popular = self.__get_user_top_popular_categories(
             user_positive_interactions,
@@ -534,6 +609,51 @@ class Recommender:
         except (OSError, IOError, pickle.PickleError) as e:
             LOGGER.error(f"Failed to save the model: {e}")
 
+    def __get_valid_cats(self, user_id, categories):
+        # Check if ther are dislikes
+        is_in_dislike = np.isin(
+            categories,
+            self.__get_user_interactions(
+                user_id,
+                positive=0,
+                timedelta=pd.Timedelta(minutes=1),
+            )["cat2"].unique(),
+        )
+        while True:
+            if True in is_in_dislike:
+                valid_cats = self.items_df[~self.items_df["cat2"].isin(categories)][
+                    "cat2"
+                ].unique()
+
+                categories = np.where(
+                    is_in_dislike,
+                    np.random.choice(valid_cats),
+                    categories,
+                )
+
+            valid_cats = self.items_df[~self.items_df["cat2"].isin(categories)][
+                "cat2"
+            ].unique()
+            # Check if values are unique
+            unique_values, counts = np.unique(categories, return_counts=True)
+            if np.all(counts == 1):
+                break
+            duplicates = unique_values[counts > 1]
+            for duplicate_value in duplicates:
+                duplicate_indices = np.where(categories == duplicate_value)[0]
+                for idx in duplicate_indices[1:]:
+                    categories[idx] = np.random.choice(valid_cats)
+
+            is_in_dislike = np.isin(
+                categories,
+                self.__get_user_interactions(
+                    user_id,
+                    positive=0,
+                    timedelta=pd.Timedelta(minutes=1),
+                )["cat2"].unique(),
+            )
+        return categories
+
     def predict(
         self, user_id: int, use_llm: bool = True, predict_n_items: int = 5
     ) -> Optional[pd.DataFrame]:
@@ -576,9 +696,7 @@ class Recommender:
             user_top_pop = user_top_pop.sample(self.categories_n, replace=flag_replace)
 
             # Get sapling weights for user top popular
-            utp_weights = user_top_pop["weight"].values / np.linalg.norm(
-                user_top_pop["weight"].values * 0.15
-            )
+            utp_weights = (user_top_pop["weight"] / user_top_pop["weight"].sum()).values
         else:
             utp_weights = np.array([])
 
@@ -586,10 +704,8 @@ class Recommender:
         # LOGGER.info(f"{utp_weights}")
 
         # Get random samples of global top popular categories
-        global_top_pop = self.top_popular_df.iloc[: self.categories_n * 2].sample(
-            self.categories_n
-        )
-        gtp_weights = np.ones(shape=(self.categories_n,)) / self.categories_n * 0.2
+        global_top_pop = self.top_popular_df.iloc[:20].sample(self.categories_n)
+        gtp_weights = (global_top_pop["weight"] / global_top_pop["weight"].sum()).values
         # LOGGER.info(f"{global_top_pop}")
         # LOGGER.info(f"{gtp_weights}")
 
@@ -608,20 +724,20 @@ class Recommender:
             )
         )
         # LLM weights
-        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,)) * 0.35
+        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,)) * 0.7
         # UTP weights
         sampling_weights[num_llm_cats : num_llm_cats + utp_weights.shape[0]] = (
-            utp_weights * 0.15
+            utp_weights * 0.05
         )
         # GTP weights
         sampling_weights[
             -gtp_weights.shape[0] - rand_weights.shape[0] : -rand_weights.shape[0]
-        ] = (gtp_weights * 0.25)
+        ] = (gtp_weights * 0.05)
         # RAND weights
-        sampling_weights[-rand_weights.shape[0] :] = rand_weights * 0.25
+        sampling_weights[-rand_weights.shape[0] :] = rand_weights * 0.2
 
         # Normalize weights
-        sampling_weights /= np.linalg.norm(sampling_weights)
+        sampling_weights /= sampling_weights.sum()
         sampling_weights = sampling_weights.tolist()
 
         # Add categories
@@ -629,16 +745,22 @@ class Recommender:
         categories.extend(global_top_pop["cat2"].tolist())
         categories.extend(rand_cats)
 
+        categories = np.array(categories)
+        categories = self.__get_valid_cats(user_id, categories)
+
         # LOGGER.info(f"{categories}")
         # LOGGER.info(f"{sampling_weights}")
         # Items to recommend
         recommendations = []
 
         # LOGGER.info(f"{random.choices(categories, sampling_weights, k=self.categories_n)}")
-        for category in random.choices(
-            categories,
-            sampling_weights,
-            k=predict_n_items,
+
+        flag_replace = len(categories) < predict_n_items
+        for category in np.random.choice(
+            a=categories,
+            p=sampling_weights,
+            replace=flag_replace,
+            size=predict_n_items,
         ):
             # LOGGER.info(f"{category}")
 
