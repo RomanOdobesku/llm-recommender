@@ -95,7 +95,7 @@ class Recommender:
         # DataFrame with columns=["cat2", "count"]
         if not (self.interactions_df.empty and self.items_df.empty):
             self.top_popular_df = (
-                self.interactions_df[self.interactions_df["interaction"] == 1]["cat2"]
+                self.interactions_df["cat2"]
                 .value_counts()
                 .to_frame()
                 .reset_index()
@@ -104,7 +104,7 @@ class Recommender:
     def __update_top_popular_df(self):
         if not (self.interactions_df.empty and self.items_df.empty):
             self.top_popular_df = (
-                self.interactions_df[self.interactions_df["interaction"] == 1]["cat2"]
+                self.interactions_df["cat2"]
                 .value_counts()
                 .to_frame()
                 .reset_index()
@@ -352,10 +352,10 @@ class Recommender:
                 - A list of the corresponding weights for those categories.
         """
 
-        user_positive_interactions = self.__get_user_positive_interactions(user_id)
+        user_interactions = self.interactions_df[self.interactions_df["user_id"] == user_id]
 
         user_top_popular = self.__get_user_top_popular_categories(
-            user_positive_interactions,
+            user_interactions,
             n_top,
         )
 
@@ -608,17 +608,17 @@ class Recommender:
             )
         )
         # LLM weights
-        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,)) * 0.35
+        sampling_weights[:num_llm_cats] = np.ones(shape=(num_llm_cats,)) * 0.4
         # UTP weights
         sampling_weights[num_llm_cats : num_llm_cats + utp_weights.shape[0]] = (
-            utp_weights * 0.15
+            utp_weights * 0.05
         )
         # GTP weights
         sampling_weights[
             -gtp_weights.shape[0] - rand_weights.shape[0] : -rand_weights.shape[0]
-        ] = (gtp_weights * 0.25)
+        ] = (gtp_weights * 0.05)
         # RAND weights
-        sampling_weights[-rand_weights.shape[0] :] = rand_weights * 0.25
+        sampling_weights[-rand_weights.shape[0] :] = rand_weights * 0.5
 
         # Normalize weights
         sampling_weights /= np.linalg.norm(sampling_weights)
