@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 Class for a hierarchical bandit-based recommendation system.
 
@@ -913,7 +914,9 @@ class Recommender:
 
         return False
 
-    def predict(self, user_id: int, use_llm: bool = True) -> Optional[pd.DataFrame]:
+    def predict(  # pylint: disable=too-many-locals
+        self, user_id: int, use_llm: bool = True
+    ) -> Optional[pd.DataFrame]:
         """
         Make recommendations based on the specified category selection method.
 

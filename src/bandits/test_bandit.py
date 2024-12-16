@@ -11,7 +11,7 @@ BASE_URL = "http://127.0.0.1:8000"
 
 def test_recommend():
     """Test the recommend endpoint with a sample user input."""
-    response = requests.post(
+    response = requests.post(  # pylint: disable=missing-timeout
         f"{BASE_URL}/recommend/", json={"user_id": 87346237431, "use_llm": True}
     )
     print("Recommend Response:", response.json())
@@ -23,7 +23,7 @@ def test_recommend():
 
 def test_update():
     """Test the update endpoint with a sample interaction data path."""
-    response = requests.post(
+    response = requests.post(  # pylint: disable=missing-timeout
         f"{BASE_URL}/update/", json={"interactions_path": "data/interactions.csv"}
     )
     assert response.status_code == 200, "Failed to update the model"
