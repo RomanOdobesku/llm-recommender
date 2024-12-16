@@ -1,3 +1,7 @@
+"""
+Module for base test of bandit recommender
+"""
+
 import requests
 
 from src.logger import LOGGER
