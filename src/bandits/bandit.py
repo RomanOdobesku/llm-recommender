@@ -2,8 +2,8 @@
 """
 Class for a hierarchical bandit-based recommendation system.
 
-For this project CSV files were used to store data 
-So code needs to be changed for using databases 
+For this project CSV files were used to store data
+So code needs to be changed for using databases
 """
 
 import json
