@@ -640,7 +640,7 @@ class Recommender:
             )
             return pd.DataFrame(columns=["cat2", "weight"])
 
-    def get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
+    def __get_llm_selected_cat(self, user_id: int, n: int = 1) -> List[str]:
         """
         Selects `n` categories using an LLM-generated prediction.
 
@@ -929,7 +929,7 @@ class Recommender:
 
         # Get prediction for the next categories from LLM
         if use_llm:
-            categories = self.get_llm_selected_cat(user_id, self.llm_cats_limit)
+            categories = self.__get_llm_selected_cat(user_id, self.llm_cats_limit)
         else:
             categories = self.__get_random_cat(self.llm_cats_limit)
 
