@@ -1,24 +1,29 @@
-""" main file to run a bot """
+"""main file to run a bot"""
+# pylint: disable=global-variable-not-assigned
 
-import os
 import csv
-from collections import defaultdict
-from datetime import datetime
+import os
 import secrets
+from datetime import datetime
+
 import pandas as pd
 import telebot
 from telebot import types
-from src.logger import LOGGER  # pylint: disable=import-error
-from .reqs import (Item, get_product_for_user,  # pylint: disable=relative-beyond-top-level
-                   escape_description,
-                   USER_REWARD_FILE,
-                   USERS_TO_REWARD)  # pylint: disable=relative-beyond-top-level
 
+from src.logger import LOGGER  # pylint: disable=import-error
+
+from .reqs import (  # pylint: disable=relative-beyond-top-level
+    USER_REWARD_FILE,
+    USERS_TO_REWARD,  # pylint: disable=relative-beyond-top-level
+    Item,
+    escape_description,
+    get_product_for_user,
+)
 
 with open(USER_REWARD_FILE, "a", encoding="utf-8") as f1:
     pass
 
-with open(USER_REWARD_FILE, 'r+', encoding="utf-8") as f1:
+with open(USER_REWARD_FILE, "r+", encoding="utf-8") as f1:
     for line in f1.readlines():
         line = line.strip()
         args = line.split()
@@ -47,29 +52,40 @@ def send_user_recommendation(user_id: str, chat_id: str, recommendation: Item):
 
     LOGGER.info(f"send product {recommendation} for chat {chat_id}")
     markup_inline = types.InlineKeyboardMarkup()
-    item_yes = types.InlineKeyboardButton(text='Не нравится',
-                                          callback_data=f"no {recommendation.item_id}")
-    item_no = types.InlineKeyboardButton(text='Нравится',
-                                         callback_data=f"yes {recommendation.item_id}")
+    item_yes = types.InlineKeyboardButton(
+        text="Не нравится", callback_data=f"no {recommendation.item_id}"
+    )
+    item_no = types.InlineKeyboardButton(
+        text="Нравится", callback_data=f"yes {recommendation.item_id}"
+    )
     markup_inline.add(item_yes, item_no)
-    photo_caption = (f"Категория: {escape_description(recommendation.info.category)}\n"
-                     f"Описание: {escape_description(recommendation.info.description)}\n"
-                     f"Цена: {escape_description(str(recommendation.info.price))}\n"
-                     f"[ссылка]({recommendation.link})")
+    photo_caption = (
+        f"Категория: {escape_description(recommendation.info.category)}\n"
+        f"Описание: {escape_description(recommendation.info.description)}\n"
+        f"Цена: {escape_description(str(recommendation.info.price))}\n"
+        f"[ссылка]({recommendation.link})"
+    )
     LOGGER.info(f"photo_caption: {photo_caption}")
-    bot.send_photo(chat_id, recommendation.image_link, caption=photo_caption,
-                   reply_markup=markup_inline, parse_mode="MarkdownV2")
+    bot.send_photo(
+        chat_id,
+        recommendation.image_link,
+        caption=photo_caption,
+        reply_markup=markup_inline,
+        parse_mode="MarkdownV2",
+    )
     if user_id in USERS_TO_REWARD.keys():
         hsh = secrets.token_hex(nbytes=16)[:15]
-        bot.send_message(chat_id,
-                         f"Поздравляю с усердной работой! Ваш токен: {hsh}.erg. Спасибо!")
+        bot.send_message(
+            chat_id, f"Поздравляю с усердной работой! Ваш токен: {hsh}.erg. Спасибо!"
+        )
         USERS_TO_REWARD[user_id] -= 1
         if USERS_TO_REWARD[user_id] == 0:
             USERS_TO_REWARD.pop(user_id)
-        with open(USER_REWARD_FILE, 'a', encoding="utf-8") as f3:
+        with open(USER_REWARD_FILE, "a", encoding="utf-8") as f3:
             f3.writelines([f"{user_id} {hsh}\n"])
 
-@bot.message_handler(commands=['start'])
+
+@bot.message_handler(commands=["start"])
 def start_handler(message):
     """
     Send message for start command
@@ -77,14 +93,16 @@ def start_handler(message):
     :param message: message of start command
     """
     LOGGER.info(f"start message for user {message.from_user.id}")
-    bot.send_message(message.chat.id,
-                     "Привет, это бот который поможет выбирать товары на Ozon."
-                     "Тебе просто надо лайкать любимые товары")
+    bot.send_message(
+        message.chat.id,
+        "Привет, это бот который поможет выбирать товары на Ozon."
+        "Тебе просто надо лайкать любимые товары",
+    )
     product = get_product_for_user(message.from_user.id)
     send_user_recommendation(message.from_user.id, message.chat.id, product)
 
 
-@bot.message_handler(commands=['help'])
+@bot.message_handler(commands=["help"])
 def help_handler(message):
     """
     Print help data
@@ -95,7 +113,7 @@ def help_handler(message):
     bot.send_message(message.chat.id, data)
 
 
-@bot.message_handler(commands=['reset'])
+@bot.message_handler(commands=["reset"])
 def reset_handler(message):
     """
     Delete user interactions
@@ -106,9 +124,10 @@ def reset_handler(message):
 
     interactions = pd.read_csv("./data/interactions.csv")
     without_a_user = interactions[interactions.user_id != user_id]
-    without_a_user.to_csv('./data/interactions.csv', index=False, header=True)
+    without_a_user.to_csv("./data/interactions.csv", index=False, header=True)
 
     bot.send_message(message.chat.id, "Удалили вашу историю")
+
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
@@ -131,16 +150,20 @@ def callback_inline(call):
         LOGGER.info(f"add negative reward for user {user_id} item {item_id}")
     # bot.answer_callback_query(call.id, "Учли ваш выбор")
     fields = [datetime.now(), user_id, item_id, interaction]
-    with open("./data/interactions.csv", 'a', encoding="utf-8") as f:
+    with open("./data/interactions.csv", "a", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter=";")
         writer.writerow(fields)
     product = get_product_for_user(user_id)
     send_user_recommendation(user_id, call.message.chat.id, product)
     try:
         new_caption = call.message.caption + text
-        bot.edit_message_caption(caption=new_caption, chat_id=call.message.chat.id,
-                             message_id=call.message.message_id,
-                             reply_markup='', caption_entities=call.message.caption_entities)
+        bot.edit_message_caption(
+            caption=new_caption,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup="",
+            caption_entities=call.message.caption_entities,
+        )
     except Exception as error:
         LOGGER.error(str(error))
 
